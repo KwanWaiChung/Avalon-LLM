@@ -1,5 +1,6 @@
 import json
 import random
+import os
 from avalonbench_dev.avalon.engine import (
     AvalonGameEnvironment,
     AvalonBasicConfig,
@@ -34,6 +35,7 @@ presets = json.load(open("data/avalon/dev.json"))
 #     "role_names": ["Merlin", "Assassin", "Servant", "Servant", "Minion"],
 # }
 
+os.makedirs(os.path.dir(OUTPUT_PATH), exist_ok=True)
 games = []
 for game_i in range(N_GAMES):
     preset = SEEDER.choice(presets)
@@ -192,3 +194,5 @@ for game_i in range(N_GAMES):
     LOGGER.info(
         f"Game {game_i+1} is finished. {'Good' if env.good_victory else 'Evil'} wins."
     )
+    with open(OUTPUT_PATH, "a+") as f:
+        f.write(json.dumps(history, ensure_ascii=False))
