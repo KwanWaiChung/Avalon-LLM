@@ -5,6 +5,8 @@ from typing import Any, Dict, Set
 
 import yaml
 
+CONTROLLER_PORT = "5000"
+
 
 def deep_merge(base_item, new_item):
     if isinstance(base_item, dict) and isinstance(new_item, dict):
@@ -93,10 +95,14 @@ class ConfigLoader:
             overwriting = False
             defaulting = False
             if "overwrite" in config:
-                overwrite = self.parse_default_and_overwrite(config.pop("overwrite"))
+                overwrite = self.parse_default_and_overwrite(
+                    config.pop("overwrite")
+                )
                 overwriting = True
             if "default" in config:
-                default = self.parse_default_and_overwrite(config.pop("default"))
+                default = self.parse_default_and_overwrite(
+                    config.pop("default")
+                )
                 defaulting = True
             for k, v in config.items():
                 parsed_v = self.parse_default_and_overwrite(v)
@@ -122,7 +128,11 @@ if __name__ == "__main__":
     parser.add_argument("config", type=str, help="Config file to load")
     # output format: choice from json or yaml
     parser.add_argument(
-        "--output", "-o", choices=["json", "yaml"], default="yaml", help="Output format"
+        "--output",
+        "-o",
+        choices=["json", "yaml"],
+        default="yaml",
+        help="Output format",
     )
     args = parser.parse_args()
     config_ = ConfigLoader().load_from(args.config)

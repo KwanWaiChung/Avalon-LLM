@@ -26,7 +26,9 @@ class TimeoutLock(asyncio.Lock):
 
     def handle(self, lock: asyncio.Lock):
         class _Handler:
-            def __init__(self, timeout_lock: TimeoutLock, handle_lock: asyncio.Lock):
+            def __init__(
+                self, timeout_lock: TimeoutLock, handle_lock: asyncio.Lock
+            ):
                 self.timeout_lock = timeout_lock
                 self.handle_lock = handle_lock
                 self.locked = False
@@ -207,7 +209,9 @@ class TaskController:
         self.router.post("/sync_all")(self.sync_all)
 
         self.router.on_event("startup")(self._initialize)
-        self.router.on_event("startup")(lambda: asyncio.create_task(self._session_gc()))
+        self.router.on_event("startup")(
+            lambda: asyncio.create_task(self._session_gc())
+        )
 
     def _initialize(self):
         self.sessions.init_lock()
@@ -238,7 +242,11 @@ class TaskController:
                         params=data,
                     )
             except Exception as e:
-                print(ColorMessage.red(f"task {name} worker {worker_id} error {e}"))
+                print(
+                    ColorMessage.red(
+                        f"task {name} worker {worker_id} error {e}"
+                    )
+                )
                 async with self.tasks_lock:
                     worker = self.tasks[name].workers[worker_id]
                     if not locked:
@@ -246,11 +254,15 @@ class TaskController:
                             worker.status = WorkerStatus.DEAD
                     else:
                         worker.status = WorkerStatus.DEAD
-                raise HTTPException(400, "Error: Worker not responding\n" + str(e))
+                raise HTTPException(
+                    400, "Error: Worker not responding\n" + str(e)
+                )
             if response.status != 200:
                 raise HTTPException(
                     response.status,
-                    "Error: Worker returned error" + "\n" + (await response.text()),
+                    "Error: Worker returned error"
+                    + "\n"
+                    + (await response.text()),
                 )
             result = await response.json()
         return result
@@ -350,8 +362,14 @@ class TaskController:
 
             # print("job sent")
 
-            if SampleStatus(result["output"]["status"]) != SampleStatus.RUNNING:
-                print(ColorMessage.green("finishing session"), result["output"]["status"])
+            if (
+                SampleStatus(result["output"]["status"])
+                != SampleStatus.RUNNING
+            ):
+                print(
+                    ColorMessage.green("finishing session"),
+                    result["output"]["status"],
+                )
                 await self._finish_session(sid)
 
             return result
@@ -386,8 +404,14 @@ class TaskController:
 
             # print("[Server] interact result")
 
-            if SampleStatus(result["output"]["status"]) != SampleStatus.RUNNING:
-                print(ColorMessage.green("finishing session"), result["output"]["status"])
+            if (
+                SampleStatus(result["output"]["status"])
+                != SampleStatus.RUNNING
+            ):
+                print(
+                    ColorMessage.green("finishing session"),
+                    result["output"]["status"],
+                )
                 await self._finish_session(data.session_id)
 
             return result
@@ -404,7 +428,9 @@ class TaskController:
                     session.name in self.tasks
                     and session.worker_id in self.tasks[session.name].workers
                 ):
-                    worker = self.tasks[session.name].workers[session.worker_id]
+                    worker = self.tasks[session.name].workers[
+                        session.worker_id
+                    ]
                     async with worker.lock:
                         worker.current -= 1
 
@@ -427,6 +453,7 @@ class TaskController:
             return result
 
     async def get_indices(self, name: str):
+        print(name, self.tasks)
         async with self.tasks_lock:
             if name not in self.tasks:
                 raise HTTPException(400, "Error: Task does not exist")
@@ -515,7 +542,11 @@ class TaskController:
                     return True
 
             # session cannot match, hard sync
-            print(ColorMessage.yellow("natural syncing failed, try to cancel all"))
+            print(
+                ColorMessage.yellow(
+                    "natural syncing failed, try to cancel all"
+                )
+            )
             try:
                 await self._call_worker(
                     name,
@@ -524,11 +555,16 @@ class TaskController:
                     locked=True,
                 )
             except Exception as e:
-                print(ColorMessage.red(
-                    f"syncing {name} task worker {worker_id} at {target_worker.address} failed"
-                ), e)
+                print(
+                    ColorMessage.red(
+                        f"syncing {name} task worker {worker_id} at {target_worker.address} failed"
+                    ),
+                    e,
+                )
                 async with self.tasks_lock:
-                    self.tasks[name].workers[worker_id].status = WorkerStatus.DEAD
+                    self.tasks[name].workers[
+                        worker_id
+                    ].status = WorkerStatus.DEAD
                     return False
             async with self.sessions.lock:
                 sessions = await self._gather_session(
@@ -545,7 +581,9 @@ class TaskController:
 
     async def _gather_session(self, condition, allow_partial=False):
         # assert self.sessions.lock.locked()
-        sessions = [sid for sid in self.sessions if condition(sid, self.sessions[sid])]
+        sessions = [
+            sid for sid in self.sessions if condition(sid, self.sessions[sid])
+        ]
         locked = {sid: False for sid in sessions}
 
         async def acquire_lock(sid):
@@ -577,7 +615,11 @@ class TaskController:
             try:
                 await self._sync_worker_status(task_name, task_worker_id)
             except TimeoutError:
-                print(ColorMessage.yellow(f"{task_name}#{task_worker_id} sync failed"))
+                print(
+                    ColorMessage.yellow(
+                        f"{task_name}#{task_worker_id} sync failed"
+                    )
+                )
 
         async with self.tasks_lock:
             for name in self.tasks:
@@ -592,7 +634,8 @@ class TaskController:
             async with task_worker.lock:
                 async with self.sessions.lock:
                     sessions = await self._gather_session(
-                        lambda _, s: s.worker_id == task_worker.id and s.name == task_name
+                        lambda _, s: s.worker_id == task_worker.id
+                        and s.name == task_name
                     )
                     if sessions is None:
                         return
@@ -605,9 +648,16 @@ class TaskController:
                         timeout=30,
                     )
                 except Exception as e:
-                    print(ColorMessage.yellow(f"worker {task_name}#{task_worker.id} cancel all failed"), e)
+                    print(
+                        ColorMessage.yellow(
+                            f"worker {task_name}#{task_worker.id} cancel all failed"
+                        ),
+                        e,
+                    )
                     async with self.tasks_lock:
-                        self.tasks[task_name].workers[task_worker.id].status = WorkerStatus.DEAD
+                        self.tasks[task_name].workers[
+                            task_worker.id
+                        ].status = WorkerStatus.DEAD
                     for sid in sessions:
                         self.sessions[sid].lock.release()
                 else:
@@ -629,7 +679,8 @@ class TaskController:
         print("cleaning sessions")
         async with self.sessions.lock:
             sessions = await self._gather_session(
-                lambda _, s: time.time() - s.last_update > self.session_expire_time,
+                lambda _, s: time.time() - s.last_update
+                > self.session_expire_time,
                 allow_partial=True,
             )
         for sid in sessions:
@@ -719,4 +770,6 @@ if __name__ == "__main__":
     router_ = APIRouter()
     controller = TaskController(router_)
     app.include_router(router_, prefix="/api")
-    uvicorn.run(app, host="0.0.0.0", port=cmd_args.port, log_level=logging.DEBUG)
+    uvicorn.run(
+        app, host="0.0.0.0", port=cmd_args.port, log_level=logging.DEBUG
+    )

@@ -1,9 +1,9 @@
 default:
   module: "src.server.tasks.avalon.AvalonBench"
   parameters:
-    concurrency: 5
+    concurrency: 1
     num_players: 5
-    discussion: False
+    discussion: True
 
 avalon-dev-naive:
   parameters:

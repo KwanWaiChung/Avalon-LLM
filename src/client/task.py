@@ -17,7 +17,11 @@ class TaskError(enum.Enum):
 
 class TaskClient:
     def __init__(
-        self, name: str, controller_address: str = "http://localhost:5000/api", *_, **__,
+        self,
+        name: str,
+        controller_address: str = "http://localhost:5000/api",
+        *_,
+        **__,
     ) -> None:
         self.name = name
         self.controller_address = controller_address
@@ -25,25 +29,36 @@ class TaskClient:
 
     def get_indices(self) -> List[SampleIndex]:
         result = requests.get(
-            self.controller_address + "/get_indices", params={"name": self.name}
+            self.controller_address + "/get_indices",
+            params={"name": self.name},
         )
         if result.status_code != 200:
-            raise AgentBenchException(result.text, result.status_code, self.name)
+            raise AgentBenchException(
+                result.text, result.status_code, self.name
+            )
         return result.json()
 
     def get_concurrency(self) -> int:
         try:
-            result = requests.get(
-                self.controller_address + "/list_workers"
-            )
+            result = requests.get(self.controller_address + "/list_workers")
         except Exception as e:
-            print(ColorMessage.yellow(f"Warning task {self.name} cannot connect to controller {e}"))
+            print(
+                ColorMessage.yellow(
+                    f"Warning task {self.name} cannot connect to controller {e}"
+                )
+            )
             return 0
         if result.status_code != 200:
-            raise AgentBenchException(result.text, result.status_code, self.name)
+            raise AgentBenchException(
+                result.text, result.status_code, self.name
+            )
         result = result.json()
         if self.name not in result:
-            print(ColorMessage.yellow(f"task {self.name} not found in worker list"))
+            print(
+                ColorMessage.yellow(
+                    f"task {self.name} not found in worker list"
+                )
+            )
             return 0
         concurrency = 0
         for worker in result[self.name]["workers"].values():
@@ -51,14 +66,18 @@ class TaskClient:
                 concurrency += worker["capacity"] - worker["current"]
         return concurrency
 
-    def run_sample(self, index: SampleIndex, agent: AgentClient) -> TaskClientOutput:
+    def run_sample(
+        self, index: SampleIndex, agent: AgentClient
+    ) -> TaskClientOutput:
         try:
             result = requests.post(
                 self.controller_address + "/start_sample",
                 json=StartSampleRequest(name=self.name, index=index).dict(),
             )
         except Exception as e:
-            return TaskClientOutput(error=TaskError.NETWORK_ERROR.value, info=str(e))
+            return TaskClientOutput(
+                error=TaskError.NETWORK_ERROR.value, info=str(e)
+            )
         if result.status_code == 406:
             return TaskClientOutput(
                 error=TaskError.NOT_AVAILABLE.value, info=result.text
@@ -75,7 +94,9 @@ class TaskClient:
                 content = agent.inference(result["output"]["history"])
                 response = AgentOutput(content=content)
             except AgentContextLimitException:
-                response = AgentOutput(status=AgentOutputStatus.AGENT_CONTEXT_LIMIT)
+                response = AgentOutput(
+                    status=AgentOutputStatus.AGENT_CONTEXT_LIMIT
+                )
             except Exception as e:
                 if hasattr(agent, "model_name"):
                     model_name = agent.model_name
@@ -145,7 +166,9 @@ class TaskClient:
         }
         res = requests.post(
             self.controller_address + "/calculate_overall",
-            json=CalculateOverallRequest(name=self.name, results=results).dict(),
+            json=CalculateOverallRequest(
+                name=self.name, results=results
+            ).dict(),
         )
         if res.status_code != 200:
             raise TaskNetworkException(res.text)

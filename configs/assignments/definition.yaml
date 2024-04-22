@@ -7,5 +7,6 @@ definition:
     import: ../tasks/task_assembly.yaml
   agent:
     import:
-      - ../agents/api_agents.yaml
+      # - ../agents/api_agents.yaml
+      - ../agents/api_agents2.yaml
       - ../agents/fs_agent.yaml

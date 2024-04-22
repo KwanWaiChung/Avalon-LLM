@@ -9,44 +9,57 @@ from src.typings import (
     ChatHistoryItem,
 )
 
+
 class LangchainSession(Session):
-    def __init__(self, model_name="gpt-3.5-turbo", temperature=0.1, api_key=None, **configs):
+    def __init__(
+        self,
+        model_name="gpt-3.5-turbo",
+        temperature=0.1,
+        api_key=None,
+        **configs,
+    ):
         super().__init__(**configs)
         if "gpt" in model_name:
+            print("Hello" * 100)
             import os
+
             if api_key is None:
                 try:
                     key = os.environ.get("OPENAI_API_KEY")
                 except:
-                    raise RuntimeError("OPENAI_API_KEY is not specified and not found in env variables")
+                    raise RuntimeError(
+                        "OPENAI_API_KEY is not specified and not found in env variables"
+                    )
             else:
                 key = api_key
 
             self.langchain_model = ChatOpenAI(
-                model=model_name,
-                temperature=temperature,
-                openai_api_key=key
+                model=model_name, temperature=temperature, openai_api_key=key
             )
         elif "claude" in model_name:
             import os
+
             if api_key is None:
                 try:
                     key = os.environ.get("CLAUDE_API_KEY")
                 except:
-                    raise RuntimeError("CLAUDE_API_KEY is not specified and not found in env variables")
+                    raise RuntimeError(
+                        "CLAUDE_API_KEY is not specified and not found in env variables"
+                    )
             else:
                 key = api_key
 
             self.langchain_model = ChatAnthropic(
                 model_name=model_name,
                 temperature=temperature,
-                anthropic_api_key=key
+                anthropic_api_key=key,
             )
         else:
             raise NotImplementedError(f"Model {model_name} not supported")
 
-        
-    def convert_history(self, history: List[ChatHistoryItem]) -> List[Union[HumanMessage, AIMessage]]:
+    def convert_history(
+        self, history: List[ChatHistoryItem]
+    ) -> List[Union[HumanMessage, AIMessage]]:
         converted_history = []
         # if self.system_prompt:
         #     converted_history.append(SystemMessage(content=self.system_prompt))
@@ -59,14 +72,14 @@ class LangchainSession(Session):
                 raise NotImplementedError(f"Role {item.role} not supported")
         return converted_history
 
-    async def action(self, input: Dict=None, **kwargs) -> AgentOutput:
+    async def action(self, input: Dict = None, **kwargs) -> AgentOutput:
         if input is not None:
             self.inject(input)
-        converted_history = self.convert_history(self.filter_messages(self.history))
+        converted_history = self.convert_history(
+            self.filter_messages(self.history)
+        )
         agent_response = await self.langchain_model.ainvoke(converted_history)
         self.history.append(
-            ChatHistoryItem(
-                role="agent", content=agent_response.content
-            )
+            ChatHistoryItem(role="agent", content=agent_response.content)
         )
         return agent_response.content

@@ -104,37 +104,46 @@ class TaskWorker:
                 print("Heartbeat failed:", e)
             await asyncio.sleep(self.heart_rate)
 
-    async def task_start_sample_wrapper(self, index: SampleIndex, session: Session, session_id: int):
+    async def task_start_sample_wrapper(
+        self, index: SampleIndex, session: Session, session_id: int
+    ):
         try:
             result = await self.task.start_sample(index, session)
         except Exception as _:
             self.session_map.pop(session_id)
             error = traceback.format_exc()
-            await session.controller.env_finish(TaskOutput(
-                index=index,
-                status=SampleStatus.TASK_ERROR,
-                result=error,
-                history=session.history,
-            ))
+            await session.controller.env_finish(
+                TaskOutput(
+                    index=index,
+                    status=SampleStatus.TASK_ERROR,
+                    result=error,
+                    history=session.history,
+                )
+            )
             return
         self.session_map.pop(session_id)
-        await session.controller.env_finish(TaskOutput(
-            index=index,
-            status=result.status,
-            result=result.result,
-            history=session.history,
-        ))
+        await session.controller.env_finish(
+            TaskOutput(
+                index=index,
+                status=result.status,
+                result=result.result,
+                history=session.history,
+            )
+        )
 
     async def start_sample(self, parameters: WorkerStartSampleRequest):
         print("job received")
         async with self.session_lock:
             if parameters.session_id in self.session_map:
-                raise HTTPException(status_code=400, detail="Session ID already exists")
+                raise HTTPException(
+                    status_code=400, detail="Session ID already exists"
+                )
             print("session map:", self.session_map)
             if len(self.session_map) >= self.task.concurrency:
                 raise HTTPException(
                     status_code=406,
-                    detail="Sample concurrency limit reached: %d" % self.task.concurrency,
+                    detail="Sample concurrency limit reached: %d"
+                    % self.task.concurrency,
                 )
             session = Session()
             print("session created")
@@ -173,10 +182,13 @@ class TaskWorker:
             parameters.agent_response
         )
         if response.status == SampleStatus.TASK_ERROR:
-            raise HTTPException(status_code=501, detail={
-                "session_id": parameters.session_id,
-                "output": response.dict(),
-            })
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "session_id": parameters.session_id,
+                    "output": response.dict(),
+                },
+            )
         return {
             "session_id": parameters.session_id,
             "output": response.dict(),
@@ -187,7 +199,9 @@ class TaskWorker:
             sessions = list(self.session_map.keys())
             cancelling = []
             for session_id in sessions:
-                cancelling.append(self.cancel(CancelRequest(session_id=session_id)))
+                cancelling.append(
+                    self.cancel(CancelRequest(session_id=session_id))
+                )
         await asyncio.gather(*cancelling)
 
     async def cancel(self, parameters: CancelRequest):
@@ -196,7 +210,9 @@ class TaskWorker:
                 raise HTTPException(status_code=400, detail="No such session")
             running = self.session_map.get(parameters.session_id)
             print("canceling", running)
-            running.session.controller.env_input = AgentOutput(status=AgentOutputStatus.CANCELLED)
+            running.session.controller.env_input = AgentOutput(
+                status=AgentOutputStatus.CANCELLED
+            )
             running.session.controller.env_signal.release()
             print("awaiting task")
             try:
@@ -226,7 +242,9 @@ class TaskWorker:
         }
 
     async def get_sessions(self):
-        return {sid: session.index for sid, session in self.session_map.items()}
+        return {
+            sid: session.index for sid, session in self.session_map.items()
+        }
 
     async def get_indices(self):
         return self.task.get_indices()
@@ -248,7 +266,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--controller", "-C", type=str, default="http://localhost:5000/api"
     )
-    parser.add_argument("--self", "-s", type=str, default="http://localhost:5001/api")
+    parser.add_argument(
+        "--self", "-s", type=str, default="http://localhost:5001/api"
+    )
     parser.add_argument("--port", "-p", type=int, default=5001)
 
     args = parser.parse_args()
@@ -265,4 +285,6 @@ if __name__ == "__main__":
         self_address=args.self,
     )
     app.include_router(router_, prefix="/api")
-    uvicorn.run(app=app, host="0.0.0.0", port=args.port, log_level=logging.DEBUG)
+    uvicorn.run(
+        app=app, host="0.0.0.0", port=args.port, log_level=logging.DEBUG
+    )

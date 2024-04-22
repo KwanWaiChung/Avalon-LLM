@@ -1,0 +1,15 @@
+mixtral:
+    module: src.client.agents.MyAgent
+    parameters:
+        name: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+        body:
+            model: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+            max_tokens: 512
+            seed: 111
+            temperature: 0.1
+            top_p: 1
+        prompter:
+            name: role_content_dict
+            args:
+                agent_role: assistant
+
