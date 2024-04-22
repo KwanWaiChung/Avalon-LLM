@@ -35,7 +35,7 @@ presets = json.load(open("data/avalon/dev.json"))
 #     "role_names": ["Merlin", "Assassin", "Servant", "Servant", "Minion"],
 # }
 
-os.makedirs(os.path.dir(OUTPUT_PATH), exist_ok=True)
+os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 games = []
 for game_i in range(N_GAMES):
     preset = SEEDER.choice(presets)
