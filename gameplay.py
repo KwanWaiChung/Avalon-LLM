@@ -20,7 +20,7 @@ MODEL_NAME = "mistralai/Mixtral-8x22B-Instruct-v0.1"
 # MODEL_NAME = "meta-llama/Llama-3-70b-chat-hf"
 END_TOKENS = ["assistant"]
 OUTPUT_PATH = "outputs/mixtral-8x22B_v0.1.jsonl"
-TEMPERATURE = 0.3
+TEMPERATURE = 0
 
 SEEDER = random.Random(SEED)
 LOGGER = get_logger(__name__, logger_level="debug", console_level="debug")
@@ -50,8 +50,12 @@ for game_i in range(N_GAMES):
         "team_votes": [],
         "quest_votes": [],
         "assassin": None,
-        "roles": env.get_roles(),
+        "roles": [
+            (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
+            for role_tuple in env.get_roles()
+        ],
     }
+
     for i, (role_i, role_name, side) in enumerate(env.get_roles()):
         if i in llm_pos:
             # init llm
