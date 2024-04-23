@@ -32,6 +32,10 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
 
 
+class OutputException(Exception):
+    pass
+
+
 class MyAgentBase(Agent):
     def __init__(self, history: Dict[str, Any], *args, **kwargs):
         self.history = history
@@ -76,7 +80,7 @@ class MyLLMAgent(MyAgentBase):
         elif inference_strategy_name == "anyscale":
             self.inference_strategy = AnyscaleInferenceStrategy()
         else:
-            raise ValueError(
+            raise OutputException(
                 f"Unrecognized strategy: {inference_strategy_name}."
             )
         self.name = name
@@ -114,7 +118,7 @@ class MyLLMAgent(MyAgentBase):
             elif player_info[1] == "Merlin":
                 merlin = str(idx)
             else:
-                raise ValueError(f"Unrecognized role: {player_info[1]}")
+                raise OutputException(f"Unrecognized role: {player_info[1]}")
 
         self.identity_prompt = (
             f"You are {self.name}, with identity {self.role_name}."
@@ -157,7 +161,7 @@ class MyLLMAgent(MyAgentBase):
                     (True for "pass", False for "fail").
 
         Raises:
-            ValueError: If the vote outcome is not "pass" or "fail" or if the
+            OutputException: If the vote outcome is not "pass" or "fail" or if the
                 response cannot be parsed as JSON.
         """
 
@@ -184,6 +188,8 @@ class MyLLMAgent(MyAgentBase):
                     end_tokens=self.end_tokens,
                 )
                 resp: str = output["output"]
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
                 resp_dict: Dict[str, str] = json.loads(
                     resp.split("```json")[-1].split("```")[0]
                 )
@@ -208,7 +214,7 @@ class MyLLMAgent(MyAgentBase):
 
                     break
         else:
-            raise ValueError(err_msg)
+            raise OutputException(err_msg)
         LOGGER.info(
             f"LLM Agent (Player {self.id}, Role: {self.role_name}) voted: {resp_dict['vote']}"
         )
@@ -252,6 +258,8 @@ class MyLLMAgent(MyAgentBase):
                     end_tokens=self.end_tokens,
                 )
                 resp: str = output["output"]
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
                 resp_dict: Dict[str, str] = json.loads(
                     resp.split("```json")[-1].split("```")[0]
                 )
@@ -278,7 +286,7 @@ class MyLLMAgent(MyAgentBase):
                     )
                     break
         else:
-            raise ValueError(err_msg)
+            raise OutputException(err_msg)
         resp_dict["prompt"] = prompt
         return resp_dict
 
@@ -314,6 +322,8 @@ class MyLLMAgent(MyAgentBase):
                     end_tokens=self.end_tokens,
                 )
                 resp: str = output["output"]
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
                 resp_dict: Dict[str, str] = json.loads(
                     resp.split("```json")[-1].split("```")[0]
                 )
@@ -349,7 +359,7 @@ class MyLLMAgent(MyAgentBase):
                 else:
                     break
         else:
-            raise ValueError(err_msg)
+            raise OutputException(err_msg)
         LOGGER.info(
             f"LLM Agent (Player {self.id}, Role: {self.role_name}) voted Player {resp_dict['merlin']} as Merlin."
         )
@@ -382,6 +392,8 @@ class MyLLMAgent(MyAgentBase):
             max_tokens=self.max_tokens,
         )
         resp: str = output["output"]
+        self.history["input_tokens"] += output["prompt_len"]
+        self.history["output_tokens"] += output["output_len"]
         return resp
 
     def _get_history(
@@ -493,6 +505,8 @@ class MyLLMAgent(MyAgentBase):
                     end_tokens=self.end_tokens,
                 )
                 resp: str = output["output"]
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
                 resp: Dict[str, str] = json.loads(
                     resp.split("```json")[-1].split("```")[0]
                 )
@@ -507,7 +521,7 @@ class MyLLMAgent(MyAgentBase):
             else:
                 break
         else:
-            raise ValueError(
+            raise OutputException(
                 f"{resp} can't be parsed as JSON despite {n_trials} attempts."
             )
         LOGGER.info(
@@ -527,7 +541,7 @@ class MyLLMAgent(MyAgentBase):
             mission_id (int): The ID of the mission.
 
         Raises:
-            ValueError: If the proposed team is invalid
+            OutputException: If the proposed team is invalid
                 (e.g., team size mismatch, invalid player IDs).
 
         Returns:
@@ -553,6 +567,8 @@ class MyLLMAgent(MyAgentBase):
                     max_tokens=self.max_tokens,
                     end_tokens=self.end_tokens,
                 )
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
                 resp: str = output["output"]
                 resp_dict: Dict[str, str] = json.loads(
                     resp.split("```json")[-1].split("```")[0]
@@ -601,10 +617,9 @@ class MyLLMAgent(MyAgentBase):
                             ),
                         }
                     )
-
                 else:
                     break
         else:
-            raise ValueError(err_msg)
+            raise OutputException(err_msg)
         resp_dict["prompt"] = prompt
         return resp_dict
