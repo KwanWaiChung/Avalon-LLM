@@ -12,6 +12,7 @@ from src.server.tasks.avalon.prompts import (
     TEAM_DISCUSSION,
     TEAM_DISCUSSION2,
     TEAM_DISCUSSION3,
+    TEAM_DISCUSSION4,
     PROPOSE_TEAM_PROMPT,
     RETRY_JSON_PROMPT,
     PROPOSE_TEAM_INVALID_SIZE_PROMPT,
@@ -396,76 +397,74 @@ class MyLLMAgent(MyAgentBase):
         self.history["output_tokens"] += output["output_len"]
         return resp
 
-    def _get_history(
-        self,
-    ) -> str:
-        history = ["### Game Play History"]
-        n_round = len(self.history["leaders"])
+    @staticmethod
+    def get_history_str(history: Dict[str, Any]) -> str:
+        output = ["### Game Play History"]
+        n_round = len(history["leaders"])
         for i in range(n_round):
-            # history.append(f"Leader is Player {self.history['leaders'][i]}")
-            if any(resp for resp in self.history["team_discs"][i]):
-                history.append(f"\n#### Round {i + 1} Discussion")
-                for p_i, resp in enumerate(self.history["team_discs"][i]):
+            # history.append(f"Leader is Player {history['leaders'][i]}")
+            if any(resp for resp in history["team_discs"][i]):
+                output.append(f"\n#### Round {i + 1} Discussion")
+                for p_i, resp in enumerate(history["team_discs"][i]):
                     if resp:
-                        history.append(f"Player {p_i}: {resp['response']}")
+                        output.append(f"Player {p_i}: {resp['response']}")
 
-            if i < len(self.history["team_props"]):
-                history.append(f"\n#### Round {i+1} Proposed Team")
+            if i < len(history["team_props"]):
+                output.append(f"\n#### Round {i+1} Proposed Team")
                 players = []
-                for player in self.history["team_props"][i]["team"]:
-                    players.append(f"player {player}")
-                history.append(
-                    ", ".join(players[:-1]).capitalize()
+                for player in history["team_props"][i]["team"]:
+                    players.append(f"Player {player}")
+                output.append(
+                    f"The leader, Player {history['leaders'][i]}, proposed "
+                    + ", ".join(players[:-1])
                     + ", and "
                     + players[-1]
                     + "."
                 )
 
-            if i < len(self.history["team_votes"]):
-                history.append(f"\n#### Round {i+1} Team Votes")
+            if i < len(history["team_votes"]):
+                output.append(f"\n#### Round {i+1} Team Votes")
                 num_approves = sum(
-                    vote["vote"]
-                    for vote in self.history["team_votes"][i]["votes"]
+                    vote["vote"] for vote in history["team_votes"][i]["votes"]
                 )
 
-                history.append(
+                output.append(
                     f"{num_approves} player(s)"
                     " approved,"
-                    f" {len(self.history['team_votes'][i]['votes']) - num_approves} player(s)"
+                    f" {len(history['team_votes'][i]['votes']) - num_approves} player(s)"
                     " rejected."
                 )
-                history.append(
+                output.append(
                     "Team result: The proposed team is"
-                    f" {'approved' if self.history['team_votes'][i]['result'] else 'rejected'}."
+                    f" {'approved' if history['team_votes'][i]['result'] else 'rejected'}."
                 )
 
             if (
-                i < len(self.history["team_votes"])
-                and self.history["team_votes"][i]["result"]
-                and i < len(self.history["quest_votes"])
+                i < len(history["team_votes"])
+                and history["team_votes"][i]["result"]
+                and i < len(history["quest_votes"])
             ):
-                history.append(f"\n#### Round {i+1} Quest Votes")
+                output.append(f"\n#### Round {i+1} Quest Votes")
                 num_approves = sum(
-                    vote["vote"]
-                    for vote in self.history["quest_votes"][i]["votes"]
+                    vote["vote"] for vote in history["quest_votes"][i]["votes"]
                 )
-                history.append(
+                output.append(
                     f"{num_approves} player(s)"
                     " passed,"
-                    f" {len(self.history['quest_votes'][i]['votes']) - num_approves} player(s)"
+                    f" {len(history['quest_votes'][i]['votes']) - num_approves} player(s)"
                     " failed."
                 )
-                history.append(
+                output.append(
                     "Quest result: The mission"
-                    f" {'succeeded' if self.history['quest_votes'][i]['result'] else 'failed'}."
+                    f" {'succeeded' if history['quest_votes'][i]['result'] else 'failed'}."
                 )
-        history_str = "\n".join(history)
-        if len(history) == 1:
+        history_str = "\n".join(output)
+        if len(output) == 1:
             history_str += "\nNone."
         return history_str.strip()
 
     def _get_prompt_prefix(self):
-        history_str = self._get_history()
+        history_str = self.get_history_str(self.history)
         prompt = self.system_info + "\n\n" + history_str
 
         prompt += (
@@ -489,7 +488,7 @@ class MyLLMAgent(MyAgentBase):
         # history.append(f"Leader is Player {self.history['leaders'][i]}")
         if not any(resp for resp in self.history["team_discs"][-1]):
             prompt += " You are the first to speak in this round."
-        prompt += " " + TEAM_DISCUSSION3
+        prompt += " " + TEAM_DISCUSSION4
 
         # json error handling
         messages = [{"role": "user", "content": prompt}]

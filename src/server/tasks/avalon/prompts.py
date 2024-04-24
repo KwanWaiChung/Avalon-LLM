@@ -33,6 +33,7 @@ The Assassin and Minion are the two evil players. They know each other's identit
 ### Game Rules
 There are 5 Quests in the game. The good team aims to succeed in 3 Quests, while the evil team aims to fail 3 Quests.
 Each round, the current Quest leader selects a team of players to go on the Quest.
+Each player takes turn to speak once before the leader selects a team.
 If the Quest team is approved, the selected players then secretly choose to either pass or fail the Quest.
 The Quest succeeds if all selected players choose to pass. The Quest fails if any player chooses to fail.
 If the Assassin correctly identifies Merlin at the end of the game, the evil team wins even if they did not manage to fail 3 Quests."""
@@ -198,6 +199,13 @@ TEAM_DISCUSSION = """You are participating in a round of discussion before the t
 TEAM_DISCUSSION2 = """You are participating in a round of discussion before the team selection phase. Leverage this discussion to strategically share information, mislead opponents, or convey messages to your teammates without explicitly revealing your identity. Draw from the provided history of previous discussions, team proposals, and voting results to inform your approach. Remember, your response will be visible to all players, so craft it carefully to gain an advantage for your side."""
 
 TEAM_DISCUSSION3 = """You are going to make some statements during this discussion to gain an advantage for your side. First, provide me your strategy in 150 words in this discussion round, and explain how you intend to use them to gain an advantage for your team. Then, provide your response in 100 words directly without further explanation. All players can read your response so be careful not to leak important information. Ground your response on the provided game play history and do not fabricate facts.
+Format your output as JSON:  
+{
+    "strategy": "",
+    "response: ""
+}"""
+
+TEAM_DISCUSSION4 = """You are going to make some statements during this discussion to gain an advantage for your side. First, provide me your strategy in 150 words in this discussion round, and explain how you intend to use them to gain an advantage for your team. Then, provide your response in 100 words directly without further explanation. Your response should include your suggestion for the team proposal. All players can read your response so be careful not to leak important information. Ground your response on the provided game play history and do not fabricate facts.
 Format your output as JSON:  
 {
     "strategy": "",
