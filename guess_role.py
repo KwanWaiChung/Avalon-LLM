@@ -28,7 +28,7 @@ Format your output as JSON:
 }"""
 
 evil_role_guess_prompt = """### Instruction
-Based on the game play history, rate the likelihood of Player {player_id} of being on the good team (Merlin or Servant) on a scale of 1 to 10, with 10 being very likely while 1 means very unlikely. 
+Based on the game play history, rate the likelihood of Player {player_id} of being on the evil team (Assassin or Minion) on a scale of 1 to 10, with 10 being very likely while 1 means very unlikely. 
 First provide your rationale, then provide the score.
 Format your output as JSON:
 {
