@@ -40,7 +40,9 @@ output_path = "outputs/mixtral-8x22B_temp=0.3_role_preds.jsonl"
 input_tokens = 0
 output_tokens = 0
 outputs = []
-for row in tqdm(data):
+n_output = sum(len(row["team_discs"]) * 5 * 2 for row in data)
+pbar = tqdm(total=n_output)
+for row in data:
     if row["status"] != "Finished":
         continue
     n_turns = len(row["team_discs"])
@@ -112,5 +114,7 @@ for row in tqdm(data):
                     "ans": ans,
                     "id": f"game={row['id']}-player={player_id}-round={turn_i+1}",
                 }
+                pbar.update()
                 with open(output_path, "a+") as f:
                     f.write(json.dumps(output_dict, ensure_ascii=False) + "\n")
+print(f"Input tokens: {input_tokens}. Output tokens: {output_tokens}.")
