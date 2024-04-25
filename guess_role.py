@@ -40,7 +40,11 @@ output_path = "outputs/mixtral-8x22B_temp=0.3_role_preds.jsonl"
 input_tokens = 0
 output_tokens = 0
 outputs = []
-n_output = sum(len(row["team_discs"]) * 5 * 2 for row in data)
+n_output = sum(
+    len(row["team_discs"]) * 5 * 2
+    for row in data
+    if row["status"] == "Finished"
+)
 pbar = tqdm(total=n_output)
 for row in data:
     if row["status"] != "Finished":
