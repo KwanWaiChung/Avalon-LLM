@@ -32,10 +32,10 @@ The Assassin and Minion are the two evil players. They know each other's identit
 
 ### Game Rules
 There are 5 Quests in the game. The good team aims to succeed in 3 Quests, while the evil team aims to fail 3 Quests.
-Each round, the current Quest leader selects a team of players to go on the Quest.
+Each round, the Quest leader selects a team of players to go on the Quest.
 Each player takes turn to speak once before the leader selects a team.
-If the Quest team is approved, the selected players then secretly choose to either pass or fail the Quest.
-The Quest succeeds if all selected players choose to pass. The Quest fails if any player chooses to fail.
+If the Quest team is approved by most players, the selected players then secretly choose to either pass or fail the Quest.
+The Quest succeeds if all selected players choose to pass and fails otherwise.
 If the Assassin correctly identifies Merlin at the end of the game, the evil team wins even if they did not manage to fail 3 Quests."""
 
 TUTORIAL_STRATEGIES_PROMPTS_ZERO_SHOT = {
@@ -154,7 +154,7 @@ VOTE_TEAM_DISCUSSION = """Discussion Phase. Please discuss your thoughts on the 
 VOTE_TEAM_ACTION = """You're a player in this game. Do you approve the team {}? Please answer `Yes` or `No`.
 """
 
-TEAM_VOTE = """Review the game history, your role, and previous discussions among players. Decide whether to vote `approve` or `reject`  the Leader's proposed Quest team with players {team}. Note that the vote is anonymous. Players will only know the number of `approve` and `reject` without knowing who vote them. Provide your rationale and your final answer as `approve` of `reject`. Format your output as JSON: 
+TEAM_VOTE = """Review the game history, your role, and previous discussions among players. Decide whether to vote `approve` or `reject` the Leader's proposed Quest team with Players {team}. Note that the vote is anonymous. Players will only know the number of `approve` and `reject` without knowing who vote them. Provide your rationale and your final answer as `approve` or `reject`. Format your output as JSON: 
 {
     "rationale": "<str>",
     "vote: "<str, either `approve` or `reject`."
@@ -213,7 +213,7 @@ Format your output as JSON:
 }"""
 
 
-PROPOSE_TEAM_PROMPT = """You are the Quest leader. Choose {num_player} players for this quest from player ids 0 to {max_player_id}, considering your role, the game history, and previous discussions among players to select the players most likely to help your team win. Your first state your rationale and then provide the team.
+PROPOSE_TEAM_PROMPT = """You are the Quest leader. Choose {num_player} players for this quest from player ids 0 to {max_player_id}, considering your role, the game history, and previous discussions among players to select the players most likely to help your team win. You first state your rationale and then provide the team.
 Format your output as JSON:
 {
     "rationale": <str>,

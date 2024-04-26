@@ -24,6 +24,7 @@ def main(
     num_llm_players: int = 5,
     end_tokens: List[str] = [],
     temperature=0,
+    add_strategy_in_history=False,
 ):
     seeder = random.Random(seed)
 
@@ -78,6 +79,7 @@ def main(
                             role=role_i,
                             end_tokens=end_tokens,
                             temperature=temperature,
+                            add_strategy_in_history=add_strategy_in_history,
                         )
                     )
                 else:
@@ -172,6 +174,8 @@ def main(
                         logger.info(
                             f"{approved_votes} approved, {len(votes) - approved_votes} failed. The team is {'accepted' if result[-1] else 'failed'}."
                         )
+                        # empty dict if rejected. Edited in phase==2 if approved.
+                        history["quest_votes"].append({})
                     elif phase == 2:
                         # vote quest (vote_on_mission)
                         quest_team = env.get_current_quest_team()
@@ -191,9 +195,10 @@ def main(
                         result = env.gather_quest_votes(
                             [v["vote"] for v in votes]
                         )
-                        history["quest_votes"].append(
-                            {"votes": votes, "result": result[-2]}
-                        )
+                        history["quest_votes"][-1] = {
+                            "votes": votes,
+                            "result": result[-2],
+                        }
                         num_failed = result[-1]
                         logger.info(
                             f"{len(votes) - num_failed} approved, {num_failed} failed. The quest {'suceeds' if result[-2] else 'fails'}."

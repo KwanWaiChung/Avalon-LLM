@@ -65,8 +65,32 @@ class MyLLMAgent(MyAgentBase):
         top_p: float = 1,
         max_tokens: int = 512,
         end_tokens: List[str] = [],
+        to_recommend_strategy: bool = False,
+        add_strategy_in_history: bool = False,
         **kwargs,
     ):
+        """
+        Initialize the agent with the given parameters.
+
+        Args:
+            history (Dict[str, Any]): The game history book keeping object.
+            model_name (str): The name of the language model.
+            inference_strategy_name (Literal["openai", "together", "anyscale"]):
+                The name of the inference strategy.
+            name (str): The name of the agent.
+            config (AvalonBasicConfig): The game configuration.
+            id (int): The id of the agent.
+            role (int): The role of the agent.
+            side (Optional[int]): The side of the agent (1 for good, 0 for evil).
+            seed (Optional[int]): The seed for the random number generator.
+            temperature (float): The temperature for the language model.
+            top_p (float): The top-p for the language model.
+            max_tokens (int): The maximum number of tokens for the language model.
+            end_tokens (List[str]): The end tokens for the language model.
+            to_recommend_strategy (bool): Whether to prompt the recommended strategy.
+            add_strategy_in_history (bool): Add the self-generated strategy in history.
+
+        """
         super().__init__(
             history=history,
             id=id,
@@ -94,6 +118,8 @@ class MyLLMAgent(MyAgentBase):
         self.top_p = top_p
         self.max_tokens = max_tokens
         self.end_tokens = end_tokens
+        self.to_recommend_strategy = to_recommend_strategy
+        self.add_strategy_in_history = add_strategy_in_history
 
     def see_sides(self, sides):
         self.player_sides = sides
@@ -129,17 +155,17 @@ class MyLLMAgent(MyAgentBase):
         good_team = sorted(servant_list + [merlin])
         if self.role_name == "Merlin":
             self.reveal_prompt = (
-                f"You know that Players {minion} and {assassin} are Evil, and players"
+                f"You know that Players {minion} and {assassin} are Evil, and Players"
                 f" {', '.join(servant_list)} are Servants."
             )
         elif self.role_name == "Minion":
             self.reveal_prompt = (
-                f"You know that Player {assassin} is Assassin, and players"
+                f"You know that Player {assassin} is Assassin, and Players"
                 f" {', '.join(good_team)} are on the good team, but you do not know who is Merlin."
             )
         elif self.role_name == "Assassin":
             self.reveal_prompt = (
-                f"You know that Player {minion} is Minion, and players"
+                f"You know that Player {minion} is Minion, and Players"
                 f" {', '.join(good_team)} are on the good team, but you do not know who is Merlin."
             )
 
@@ -398,19 +424,34 @@ class MyLLMAgent(MyAgentBase):
         return resp
 
     @staticmethod
-    def get_history_str(history: Dict[str, Any]) -> str:
+    def get_history_str(
+        history: Dict[str, Any], strategy_idx: int = None
+    ) -> str:
         output = ["### Game Play History"]
         n_round = len(history["leaders"])
         for i in range(n_round):
             # history.append(f"Leader is Player {history['leaders'][i]}")
             if any(resp for resp in history["team_discs"][i]):
                 output.append(f"\n#### Round {i + 1} Discussion")
+                if strategy_idx is not None and strategy_idx < len(
+                    history["team_discs"][i]
+                ):
+                    output.append(
+                        f"**Strategy:** {history['team_discs'][i][strategy_idx]['strategy']}"
+                    )
                 for p_i, resp in enumerate(history["team_discs"][i]):
                     if resp:
                         output.append(f"Player {p_i}: {resp['response']}")
 
             if i < len(history["team_props"]):
                 output.append(f"\n#### Round {i+1} Proposed Team")
+                if (
+                    strategy_idx is not None
+                    and history["leaders"][i] == strategy_idx
+                ):
+                    output.append(
+                        f"**Strategy:** {history['team_props'][i]['rationale']}"
+                    )
                 players = []
                 for player in history["team_props"][i]["team"]:
                     players.append(f"Player {player}")
@@ -424,6 +465,13 @@ class MyLLMAgent(MyAgentBase):
 
             if i < len(history["team_votes"]):
                 output.append(f"\n#### Round {i+1} Team Votes")
+                if strategy_idx is not None:
+                    output.append(
+                        f"**Strategy:** {history['team_votes'][i]['votes'][strategy_idx]['rationale']}"
+                    )
+                    output.append(
+                        f"**Your Vote:** {'Approve' if history['team_votes'][i]['votes'][strategy_idx]['vote'] else 'reject'}."
+                    )
                 num_approves = sum(
                     vote["vote"] for vote in history["team_votes"][i]["votes"]
                 )
@@ -443,8 +491,18 @@ class MyLLMAgent(MyAgentBase):
                 i < len(history["team_votes"])
                 and history["team_votes"][i]["result"]
                 and i < len(history["quest_votes"])
+                and history["quest_votes"][i]
             ):
                 output.append(f"\n#### Round {i+1} Quest Votes")
+                if (
+                    strategy_idx is not None
+                    and strategy_idx in history["team_props"][i]["team"]
+                ):
+                    _idx = history["team_props"][i]["team"].index(strategy_idx)
+                    output.append(
+                        f"**Strategy:** {history['quest_votes'][i]['votes'][_idx]['rationale']}"
+                    )
+
                 num_approves = sum(
                     vote["vote"] for vote in history["quest_votes"][i]["votes"]
                 )
@@ -464,7 +522,9 @@ class MyLLMAgent(MyAgentBase):
         return history_str.strip()
 
     def _get_prompt_prefix(self):
-        history_str = self.get_history_str(self.history)
+        history_str = self.get_history_str(
+            self.history, self.id if self.add_strategy_in_history else None
+        )
         prompt = self.system_info + "\n\n" + history_str
 
         prompt += (
