@@ -159,11 +159,11 @@ class MyLLMAgent(MyAgentBase):
             A dictionary with keys:
                 `rationale` (str): The rationale for the vote.
                 `vote` (bool): The outcome of the vote
-                    (True for "pass", False for "fail").
+                    (True for "approve", False for "reject").
 
         Raises:
-            OutputException: If the vote outcome is not "pass" or "fail" or if the
-                response cannot be parsed as JSON.
+            OutputException: If the vote outcome is not "approve" or "reject"
+                or if the response cannot be parsed as JSON.
         """
 
         prompt = (
@@ -204,14 +204,14 @@ class MyLLMAgent(MyAgentBase):
                 )
                 messages.append({"role": "user", "content": RETRY_JSON_PROMPT})
             else:
-                if resp_dict["vote"] not in ["pass", "fail"]:
+                if resp_dict["vote"] not in ["approve", "reject"]:
                     messages.append(
                         {"role": "assistant", "content": output["output"]}
                     )
-                    error_msg = f"The vote should be either `pass` or `fail`, but you provided `{resp_dict['vote']}`."
+                    error_msg = f"The vote should be either `approve` or `reject`, but you provided `{resp_dict['vote']}`."
                     messages.append({"role": "user", "content": error_msg})
                 else:
-                    resp_dict["vote"] = resp_dict["vote"] == "pass"
+                    resp_dict["vote"] = resp_dict["vote"] == "approve"
 
                     break
         else:

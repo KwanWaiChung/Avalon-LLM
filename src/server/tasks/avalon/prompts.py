@@ -154,10 +154,10 @@ VOTE_TEAM_DISCUSSION = """Discussion Phase. Please discuss your thoughts on the 
 VOTE_TEAM_ACTION = """You're a player in this game. Do you approve the team {}? Please answer `Yes` or `No`.
 """
 
-TEAM_VOTE = """Review the game history, your role, and previous discussions among players. Decide whether to vote `pass` or `fail` for this Quest team with players {team}. Note that the vote is anonymous. Players will only know the number of `pass` and `fail` without knowing who vote them. Provide your rationale and your final answer as `pass` of `fail`. Format your output as JSON: 
+TEAM_VOTE = """Review the game history, your role, and previous discussions among players. Decide whether to vote `approve` or `reject`  the Leader's proposed Quest team with players {team}. Note that the vote is anonymous. Players will only know the number of `approve` and `reject` without knowing who vote them. Provide your rationale and your final answer as `approve` of `reject`. Format your output as JSON: 
 {
     "rationale": "<str>",
-    "vote: "<str, either `pass` or `fail`."
+    "vote: "<str, either `approve` or `reject`."
 }"""
 
 VOTE_MISSION_ACTION = """The team {} was approved, which includes you. Do you want to help the mission succeed? Please answer `Yes` or `No`.
