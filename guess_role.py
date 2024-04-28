@@ -98,11 +98,14 @@ for row in data:
                         input_tokens += output["prompt_len"]
                         output_tokens += output["output_len"]
                         resp_dict: Dict[str, str] = json.loads(
-                            resp.split("```json")[-1].split("```")[0]
+                            "{"
+                            + resp.split("```json")[-1]
+                            .split("```")[0]
+                            .split("{", 1)[-1]
                         )
                     except json.JSONDecodeError:
                         print(
-                            f"{resp} can't be parsed as JSON. Trial: {i}/{n_trials}."
+                            f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
                         )
                         messages.append(
                             {"role": "assistant", "content": output["output"]}

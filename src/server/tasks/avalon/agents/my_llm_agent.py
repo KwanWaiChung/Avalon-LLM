@@ -1,25 +1,20 @@
 from typing import List, Literal, Dict, Any, Union
 from avalonbench_dev.avalon.engine import AvalonBasicConfig
 from src.server.tasks.avalon.agents.agent import Agent
-from src.server.tasks.avalon.prompts import (
-    CHOOSE_TEAM_LEADER,
-    INFO_ROLE,
-    INFO_YOUR_ROLE,
+from src.server.tasks.avalon.my_prompts import (
     INTRODUCTION,
-    INTRODUCTION2,
-    REVEAL_PROMPTS,
     SUMMARIZE,
     TEAM_DISCUSSION,
-    TEAM_DISCUSSION2,
-    TEAM_DISCUSSION3,
-    TEAM_DISCUSSION4,
     PROPOSE_TEAM_PROMPT,
     RETRY_JSON_PROMPT,
     PROPOSE_TEAM_INVALID_SIZE_PROMPT,
     PROPOSE_TEAM_INVALID_PLAYER_PROMPT,
-    VOTE_MISSION_ACTION2,
+    VOTE_MISSION_ACTION,
     TEAM_VOTE,
     ASSASSINATION_PROMPT,
+    GUESS_GOOD_ROLE_PROMPT,
+    GUESS_ALL_ROLE_PROMPT,
+    GUESS_OTHERS_BELIEF_PRMOPT,
 )
 from src.utils.inference import (
     OpenAIInferenceStrategy,
@@ -128,7 +123,7 @@ class MyLLMAgent(MyAgentBase):
         """Initiliaze the game info for the agent, which includes game introduction, role, and reveal information for different roles."""
         # Introduction Prompt
         verbal_side = ["Evil", "Good"]
-        intro_prompt = INTRODUCTION2
+        intro_prompt = INTRODUCTION
         intro_prompt += "\n"
 
         minion = ""
@@ -218,11 +213,14 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp_dict: Dict[str, str] = json.loads(
-                    resp.split("```json")[-1].split("```")[0]
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
                 )
             except json.JSONDecodeError:
                 err_msg = (
-                    f"{resp} can't be parsed as JSON. Trial: {i}/{n_trials}."
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
                 )
                 LOGGER.debug(err_msg)
                 messages.append(
@@ -263,7 +261,7 @@ class MyLLMAgent(MyAgentBase):
         prompt = (
             self._get_prompt_prefix()
             + " "
-            + VOTE_MISSION_ACTION2.replace(
+            + VOTE_MISSION_ACTION.replace(
                 "{team}", ", ".join([str(p) for p in quest_team])
             )
         )
@@ -288,11 +286,14 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp_dict: Dict[str, str] = json.loads(
-                    resp.split("```json")[-1].split("```")[0]
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
                 )
             except json.JSONDecodeError:
                 err_msg = (
-                    f"{resp} can't be parsed as JSON. Trial: {i}/{n_trials}."
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
                 )
                 LOGGER.debug(err_msg)
                 messages.append(
@@ -352,11 +353,14 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp_dict: Dict[str, str] = json.loads(
-                    resp.split("```json")[-1].split("```")[0]
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
                 )
             except json.JSONDecodeError:
                 err_msg = (
-                    f"{resp} can't be parsed as JSON. Trial: {i}/{n_trials}."
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
                 )
                 LOGGER.debug(err_msg)
                 messages.append(
@@ -548,7 +552,7 @@ class MyLLMAgent(MyAgentBase):
         # history.append(f"Leader is Player {self.history['leaders'][i]}")
         if not any(resp for resp in self.history["team_discs"][-1]):
             prompt += " You are the first to speak in this round."
-        prompt += " " + TEAM_DISCUSSION4
+        prompt += " " + TEAM_DISCUSSION
 
         # json error handling
         messages = [{"role": "user", "content": prompt}]
@@ -567,11 +571,14 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp: Dict[str, str] = json.loads(
-                    resp.split("```json")[-1].split("```")[0]
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
                 )
             except json.JSONDecodeError:
                 LOGGER.debug(
-                    f"{resp} can't be parsed as JSON. Trial: {i}/{n_trials}."
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
                 )
                 messages.append(
                     {"role": "assistant", "content": output["output"]}
@@ -630,11 +637,14 @@ class MyLLMAgent(MyAgentBase):
                 self.history["output_tokens"] += output["output_len"]
                 resp: str = output["output"]
                 resp_dict: Dict[str, str] = json.loads(
-                    resp.split("```json")[-1].split("```")[0]
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
                 )
             except json.JSONDecodeError:
                 err_msg = (
-                    f"{resp} can't be parsed as JSON. Trial: {i}/{n_trials}."
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
                 )
                 LOGGER.debug(err_msg)
                 messages.append(
@@ -682,3 +692,140 @@ class MyLLMAgent(MyAgentBase):
             raise OutputException(err_msg)
         resp_dict["prompt"] = prompt
         return resp_dict
+
+    def guess_role(self, player_i: int) -> Dict[str, Any]:
+        """
+        Guess the role of a player based on the game state.
+
+        Args:
+            player_i (int): The index of the player to guess the role for.
+
+        Returns:
+            A dictionary with keys:
+                - "output": A dictionary containing the guessed role
+                    information.
+                - "prompt": The prompt used to generate the response.
+
+        Raises:
+            ValueError: If the current role is not one of the allowed roles to guess.
+            OutputException: If the response cannot be parsed as JSON after multiple trials.
+
+        """
+        prompt = self._get_prompt_prefix()
+        included_roles = []
+        if self.role == AvalonBasicConfig.ROLES_REVERSE["Servant"]:
+            prompt += " " + GUESS_ALL_ROLE_PROMPT.replace("{i}", str(player_i))
+            included_roles = ["Merlin", "Servant", "Minion"]
+        elif self.role in [
+            AvalonBasicConfig.ROLES_REVERSE["Assassin"],
+            AvalonBasicConfig.ROLES_REVERSE["Minion"],
+        ]:
+            prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
+                "{i}", str(player_i)
+            )
+            included_roles = ["Merlin", "Servant"]
+        else:
+            raise ValueError("Merlin can't guess role since he already know.")
+
+        # json error handling
+        messages = [{"role": "user", "content": prompt}]
+        n_trials = 3
+        for i in range(n_trials):
+            try:
+                output = self.inference_strategy.generate(
+                    messages=messages,
+                    model_name=self.model_name,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                    end_tokens=self.end_tokens,
+                )
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
+                resp: str = output["output"]
+                resp_dict: Dict[str, str] = json.loads(
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
+                )
+            except json.JSONDecodeError:
+                err_msg = (
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
+                )
+                LOGGER.debug(err_msg)
+                messages.append(
+                    {"role": "assistant", "content": output["output"]}
+                )
+                messages.append({"role": "user", "content": RETRY_JSON_PROMPT})
+            else:
+                role_error = [
+                    role for role in included_roles if role not in resp_dict
+                ]
+                if role_error:
+                    err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
+                    messages.append(
+                        {"role": "assistant", "content": output["output"]}
+                    )
+                    messages.append({"role": "user", "content": err_msg})
+                else:
+                    break
+        else:
+            raise OutputException(err_msg)
+        return {"output": resp_dict, "prompt": prompt}
+
+    def guess_belief(self, player_i: int, tgt_role: str) -> Dict[str, Any]:
+        prompt = self._get_prompt_prefix()
+        prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
+            "{i}", str(player_i)
+        ).replace("{role}", tgt_role)
+
+        # json error handling
+        messages = [{"role": "user", "content": prompt}]
+        n_trials = 3
+        for i in range(n_trials):
+            try:
+                output = self.inference_strategy.generate(
+                    messages=messages,
+                    model_name=self.model_name,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                    end_tokens=self.end_tokens,
+                )
+                self.history["input_tokens"] += output["prompt_len"]
+                self.history["output_tokens"] += output["output_len"]
+                resp: str = output["output"]
+                resp_dict: Dict[str, str] = json.loads(
+                    "{"
+                    + resp.split("```json")[-1]
+                    .split("```")[0]
+                    .split("{", 1)[-1]
+                )
+            except json.JSONDecodeError:
+                err_msg = (
+                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
+                )
+                LOGGER.debug(err_msg)
+                messages.append(
+                    {"role": "assistant", "content": output["output"]}
+                )
+                messages.append({"role": "user", "content": RETRY_JSON_PROMPT})
+            else:
+                if resp_dict["score"] < 1 or resp_dict["score"] > 10:
+                    err_msg = f"score must be from 1 to 10. Received: {resp_dict['score']}."
+                    LOGGER.debug(err_msg)
+                    messages.append(
+                        {"role": "assistant", "content": output["output"]}
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": err_msg,
+                        }
+                    )
+                else:
+                    break
+        else:
+            raise OutputException(err_msg)
+        return {"output": resp_dict, "prompt": prompt}

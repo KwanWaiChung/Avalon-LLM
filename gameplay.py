@@ -2,6 +2,7 @@ import json
 import random
 import os
 from avalonbench_dev.avalon.engine import (
+    AvalonBasicConfig,
     AvalonGameEnvironment,
 )
 from src.server.tasks.avalon.agents.baseline_agents import find_naive_agent
@@ -20,12 +21,31 @@ def main(
     output_path,
     n_games=20,
     seed: int = 111,
-    do_discussion=True,
     num_llm_players: int = 5,
     end_tokens: List[str] = [],
     temperature=0,
+    to_discuss=True,
     add_strategy_in_history=False,
+    to_guess_role: bool = False,
+    to_guess_belief: bool = False,
 ):
+    """_summary_
+
+    Args:
+        model_name (_type_): _description_
+        inference_strategy_name (_type_): _description_
+        output_path (_type_): _description_
+        n_games (int, optional): _description_. Defaults to 20.
+        seed (int, optional): _description_. Defaults to 111.
+        num_llm_players (int, optional): _description_. Defaults to 5.
+        end_tokens (List[str], optional): _description_. Defaults to [].
+        temperature (int, optional): _description_. Defaults to 0.
+        to_discuss (bool, optional): _description_. Defaults to True.
+        add_strategy_in_history (bool, optional): _description_. Defaults to False.
+        to_guess_role (bool): Guess other's role after discussion.
+        to_guess_belief (bool): Guess other's belief on your role.
+
+    """
     seeder = random.Random(seed)
 
     presets = json.load(open("data/avalon/dev.json"))
@@ -39,7 +59,8 @@ def main(
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     games = []
-    for game_i in range(n_games):
+    game_i = 0
+    for _ in range(n_games):
         # Keep sampling if encountered error
         while True:
             preset = seeder.choice(presets)
@@ -53,6 +74,8 @@ def main(
                 "team_props": [],
                 "team_votes": [],
                 "quest_votes": [],
+                "role_guess": [],
+                "role_belief": [],
                 "assassin": None,
                 "roles": [
                     (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
@@ -101,7 +124,7 @@ def main(
                             oberon=env.config.oberon,
                             num_good=env.config.num_good,
                             num_evil=env.config.num_evil,
-                            discussion=do_discussion,
+                            discussion=to_discuss,
                             seed=seed,
                         )
                     )
@@ -127,7 +150,7 @@ def main(
                         logger.info(
                             f"Team selection phase, the leader is Player {leader}."
                         )
-                        if do_discussion:
+                        if to_discuss:
                             # for player in player_list:
                             #     player.summarize()
                             history["team_discs"].append([])
@@ -138,6 +161,74 @@ def main(
                                     mission_id=env.turn,
                                 )
                                 history["team_discs"][-1].append(resp)
+                        if to_guess_role:
+                            # only ask servant and evil team to guess
+                            # servant guess any others.
+                            # evil team guess which good player is Merlin.
+                            history["role_guess"].append([])
+                            for player in player_list:
+                                if (
+                                    player.role
+                                    == AvalonBasicConfig.ROLES_REVERSE[
+                                        "Merlin"
+                                    ]
+                                ):
+                                    continue
+                                elif (
+                                    player.role
+                                    == AvalonBasicConfig.ROLES_REVERSE[
+                                        "Servant"
+                                    ]
+                                ):
+                                    # randomly pick another player
+                                    player_i = seeder.choice(
+                                        [i for i in range(5) if i != player.id]
+                                    )
+                                elif player.role in [
+                                    AvalonBasicConfig.ROLES_REVERSE[
+                                        "Assassin"
+                                    ],
+                                    AvalonBasicConfig.ROLES_REVERSE["Minion"],
+                                ]:
+                                    player_i = seeder.choice(
+                                        [
+                                            player.id
+                                            for player in player_list
+                                            if player.role
+                                            in [
+                                                AvalonBasicConfig.ROLES_REVERSE[
+                                                    "Servant"
+                                                ],
+                                                AvalonBasicConfig.ROLES_REVERSE[
+                                                    "Merlin"
+                                                ],
+                                            ]
+                                        ]
+                                    )
+                                else:
+                                    raise NotImplementedError(
+                                        f"Not implemented for {player.role}."
+                                    )
+                                resp = player.guess_role(player_i)
+                                resp["src_player"] = player.id
+                                resp["tgt_player"] = player_i
+                                history["role_guess"][-1].append(resp)
+                        if to_guess_belief:
+                            history["role_belief"].append([])
+                            for player in player_list:
+                                player_i = seeder.choice(
+                                    [i for i in range(5) if i != player.id]
+                                )
+                                role = seeder.choice(
+                                    ["Merlin", "Servant", "Minion"]
+                                )
+                                resp = player.guess_belief(
+                                    player_i=player_i, tgt_role=role
+                                )
+                                resp["src_player"] = player.id
+                                resp["tgt_player"] = player_i
+                                resp["tgt_role"] = role
+                                history["role_belief"][-1].append(resp)
                         # after discussion, choose team (propose_team)
                         team: Dict[str, Union[str, List[int]]] = player_list[
                             leader
@@ -230,12 +321,13 @@ def main(
                         f.write(json.dumps(history, ensure_ascii=False) + "\n")
                     break  # break the game loop to sample another game.
             # one game has done
+            game_i += 1
             if env.done:
                 history["final_result"] = env.good_victory
                 history["status"] = "Finished"
                 games.append(history)
                 logger.info(
-                    f"Game {game_i+1} is finished. {'Good' if env.good_victory else 'Evil'} wins."
+                    f"Game {game_i} is finished. {'Good' if env.good_victory else 'Evil'} wins."
                 )
                 with open(output_path, "a+") as f:
                     f.write(json.dumps(history, ensure_ascii=False) + "\n")
