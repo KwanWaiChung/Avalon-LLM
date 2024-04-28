@@ -21,6 +21,7 @@ from src.utils.inference import (
     TogetherInferenceStrategy,
     AnyscaleInferenceStrategy,
 )
+from transformers import AutoTokenizer
 import json
 import logging
 
@@ -62,6 +63,8 @@ class MyLLMAgent(MyAgentBase):
         end_tokens: List[str] = [],
         to_recommend_strategy: bool = False,
         add_strategy_in_history: bool = False,
+        tokenizer_path: str = None,
+        max_input_length: int = None,
         **kwargs,
     ):
         """
@@ -84,6 +87,10 @@ class MyLLMAgent(MyAgentBase):
             end_tokens (List[str]): The end tokens for the language model.
             to_recommend_strategy (bool): Whether to prompt the recommended strategy.
             add_strategy_in_history (bool): Add the self-generated strategy in history.
+            tokenizer_path (str): The path of the tokenizer. If provided, it will be used
+                to check whether the input exceed max_input_length.
+            max_input_length (int): The maximum input length allowed.
+
 
         """
         super().__init__(
@@ -92,6 +99,13 @@ class MyLLMAgent(MyAgentBase):
             role=role,
             config=config,
         )
+        if (tokenizer_path is not None and max_input_length is None) or (
+            tokenizer_path is None and max_input_length is not None
+        ):
+            raise ValueError(
+                f"You have to provide both `tokenizer_path` and `max_input_length`."
+            )
+
         self.model_name = model_name
         if inference_strategy_name == "openai":
             self.inference_strategy = OpenAIInferenceStrategy()
@@ -115,6 +129,12 @@ class MyLLMAgent(MyAgentBase):
         self.end_tokens = end_tokens
         self.to_recommend_strategy = to_recommend_strategy
         self.add_strategy_in_history = add_strategy_in_history
+        self.tokenizer = (
+            AutoTokenizer.from_pretrained(tokenizer_path)
+            if tokenizer_path
+            else None
+        )
+        self.max_input_length = max_input_length
 
     def see_sides(self, sides):
         self.player_sides = sides
@@ -187,17 +207,33 @@ class MyLLMAgent(MyAgentBase):
                 or if the response cannot be parsed as JSON.
         """
 
-        prompt = (
-            self._get_prompt_prefix()
-            + " "
-            + TEAM_VOTE.replace("{team}", ", ".join([str(p) for p in team]))
-        )
-        messages = [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ]
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = (
+                self._get_prompt_prefix(n_rounds_to_skip)
+                + " "
+                + TEAM_VOTE.replace(
+                    "{team}", ", ".join([str(p) for p in team])
+                )
+            )
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ]
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
+
         n_trials = 3
         for i in range(n_trials):
             try:
@@ -258,19 +294,32 @@ class MyLLMAgent(MyAgentBase):
         Returns:
             bool: The vote result.
         """
-        prompt = (
-            self._get_prompt_prefix()
-            + " "
-            + VOTE_MISSION_ACTION.replace(
-                "{team}", ", ".join([str(p) for p in quest_team])
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = (
+                self._get_prompt_prefix(n_rounds_to_skip)
+                + " "
+                + VOTE_MISSION_ACTION.replace(
+                    "{team}", ", ".join([str(p) for p in quest_team])
+                )
             )
-        )
-        messages = [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ]
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ]
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
         n_trials = 3
         for i in range(n_trials):
             try:
@@ -327,17 +376,32 @@ class MyLLMAgent(MyAgentBase):
         Returns:
             int: The id of the player to assassinate. The id is in the range [0, num_players).
         """
-        prompt = (
-            self._get_prompt_prefix()
-            + "\n\n"
-            + ASSASSINATION_PROMPT.replace("{max_player_id}", str(num_players))
-        )
-        messages = [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ]
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = (
+                self._get_prompt_prefix(n_rounds_to_skip)
+                + "\n\n"
+                + ASSASSINATION_PROMPT.replace(
+                    "{max_player_id}", str(num_players)
+                )
+            )
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ]
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
         n_trials = 3
         for i in range(n_trials):
             try:
@@ -429,11 +493,15 @@ class MyLLMAgent(MyAgentBase):
 
     @staticmethod
     def get_history_str(
-        history: Dict[str, Any], strategy_idx: int = None
+        history: Dict[str, Any],
+        strategy_idx: int = None,
+        n_rounds_to_skip: int = 0,
     ) -> str:
         output = ["### Game Play History"]
         n_round = len(history["leaders"])
         for i in range(n_round):
+            if i < n_rounds_to_skip:
+                continue
             # history.append(f"Leader is Player {history['leaders'][i]}")
             if any(resp for resp in history["team_discs"][i]):
                 output.append(f"\n#### Round {i + 1} Discussion")
@@ -525,9 +593,11 @@ class MyLLMAgent(MyAgentBase):
             history_str += "\nNone."
         return history_str.strip()
 
-    def _get_prompt_prefix(self):
+    def _get_prompt_prefix(self, n_rounds_to_skip: int = 0):
         history_str = self.get_history_str(
-            self.history, self.id if self.add_strategy_in_history else None
+            self.history,
+            self.id if self.add_strategy_in_history else None,
+            n_rounds_to_skip=n_rounds_to_skip,
         )
         prompt = self.system_info + "\n\n" + history_str
 
@@ -540,19 +610,30 @@ class MyLLMAgent(MyAgentBase):
         return prompt.strip()
 
     def team_discussion(self, team_size, team_leader_id, mission_id):
-        prompt = self._get_prompt_prefix()
-        if self.id == team_leader_id:
-            prompt += " You are the Quest leader of this round."
-        else:
-            prompt += (
-                f" Player {team_leader_id} is the Quest leader of this round."
-            )
-        prompt += f" This Quest requires {team_size} players to vote."
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = self._get_prompt_prefix(n_rounds_to_skip)
+            if self.id == team_leader_id:
+                prompt += " You are the Quest leader of this round."
+            else:
+                prompt += f" Player {team_leader_id} is the Quest leader of this round."
+            prompt += f" This Quest requires {team_size} players to vote."
 
-        # history.append(f"Leader is Player {self.history['leaders'][i]}")
-        if not any(resp for resp in self.history["team_discs"][-1]):
-            prompt += " You are the first to speak in this round."
-        prompt += " " + TEAM_DISCUSSION
+            # history.append(f"Leader is Player {self.history['leaders'][i]}")
+            if not any(resp for resp in self.history["team_discs"][-1]):
+                prompt += " You are the first to speak in this round."
+            prompt += " " + TEAM_DISCUSSION
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
 
         # json error handling
         messages = [{"role": "user", "content": prompt}]
@@ -615,10 +696,23 @@ class MyLLMAgent(MyAgentBase):
                 `rationale` (str): The rationale for the proposed team.
                 `team` (List[int]): The list of player IDs in the proposed team.
         """
-        prompt = self._get_prompt_prefix()
-        prompt += " " + PROPOSE_TEAM_PROMPT.replace(
-            "{num_player}", str(team_size)
-        ).replace("{max_player_id}", str(self.config.num_players - 1))
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = self._get_prompt_prefix(n_rounds_to_skip)
+            prompt += " " + PROPOSE_TEAM_PROMPT.replace(
+                "{num_player}", str(team_size)
+            ).replace("{max_player_id}", str(self.config.num_players - 1))
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
 
         # json error handling
         messages = [{"role": "user", "content": prompt}]
@@ -711,21 +805,38 @@ class MyLLMAgent(MyAgentBase):
             OutputException: If the response cannot be parsed as JSON after multiple trials.
 
         """
-        prompt = self._get_prompt_prefix()
-        included_roles = []
-        if self.role == AvalonBasicConfig.ROLES_REVERSE["Servant"]:
-            prompt += " " + GUESS_ALL_ROLE_PROMPT.replace("{i}", str(player_i))
-            included_roles = ["Merlin", "Servant", "Minion"]
-        elif self.role in [
-            AvalonBasicConfig.ROLES_REVERSE["Assassin"],
-            AvalonBasicConfig.ROLES_REVERSE["Minion"],
-        ]:
-            prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
-                "{i}", str(player_i)
-            )
-            included_roles = ["Merlin", "Servant"]
-        else:
-            raise ValueError("Merlin can't guess role since he already know.")
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = self._get_prompt_prefix(n_rounds_to_skip)
+            included_roles = []
+            if self.role == AvalonBasicConfig.ROLES_REVERSE["Servant"]:
+                prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
+                    "{i}", str(player_i)
+                )
+                included_roles = ["Merlin", "Servant", "Minion"]
+            elif self.role in [
+                AvalonBasicConfig.ROLES_REVERSE["Assassin"],
+                AvalonBasicConfig.ROLES_REVERSE["Minion"],
+            ]:
+                prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
+                    "{i}", str(player_i)
+                )
+                included_roles = ["Merlin", "Servant"]
+            else:
+                raise ValueError(
+                    "Merlin can't guess role since he already know."
+                )
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
 
         # json error handling
         messages = [{"role": "user", "content": prompt}]
@@ -775,10 +886,23 @@ class MyLLMAgent(MyAgentBase):
         return {"output": resp_dict, "prompt": prompt}
 
     def guess_belief(self, player_i: int, tgt_role: str) -> Dict[str, Any]:
-        prompt = self._get_prompt_prefix()
-        prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
-            "{i}", str(player_i)
-        ).replace("{role}", tgt_role)
+        prompt_too_long = True
+        n_rounds_to_skip = 0
+        while prompt_too_long:
+            prompt = self._get_prompt_prefix(n_rounds_to_skip)
+            prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
+                "{i}", str(player_i)
+            ).replace("{role}", tgt_role)
+            if self.tokenizer is not None:
+                prompt_len = len(self.tokenizer(prompt)["input_ids"])
+                prompt_too_long = prompt_len >= self.max_input_length
+            else:
+                break
+            if prompt_too_long:
+                n_rounds_to_skip += 1
+                LOGGER.info(
+                    f"Current prompt len is {prompt_len}, which is longer than {self.max_input_length}."
+                )
 
         # json error handling
         messages = [{"role": "user", "content": prompt}]

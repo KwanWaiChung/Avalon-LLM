@@ -24,10 +24,13 @@ def main(
     num_llm_players: int = 5,
     end_tokens: List[str] = [],
     temperature=0,
+    tokenizer_path: str = None,
+    max_input_length: int = None,
     to_discuss=True,
     add_strategy_in_history=False,
     to_guess_role: bool = False,
     to_guess_belief: bool = False,
+    resume: bool = False,
 ):
     """_summary_
 
@@ -40,10 +43,15 @@ def main(
         num_llm_players (int, optional): _description_. Defaults to 5.
         end_tokens (List[str], optional): _description_. Defaults to [].
         temperature (int, optional): _description_. Defaults to 0.
+        tokenizer_path (str): The path of the tokenizer. If provided, it will be used
+            to check whether the input exceed max_input_length.
+        max_input_length (int): The maximum input length allowed.
         to_discuss (bool, optional): _description_. Defaults to True.
         add_strategy_in_history (bool, optional): _description_. Defaults to False.
         to_guess_role (bool): Guess other's role after discussion.
         to_guess_belief (bool): Guess other's belief on your role.
+        resume (bool): Resume previous session. Note that the random state
+            won't be recovered.
 
     """
     seeder = random.Random(seed)
@@ -56,10 +64,26 @@ def main(
     #     # "role_names": ["Assassin", "Merlin", "Servant", "Servant", "Minion"],
     #     "role_names": ["Merlin", "Assassin", "Servant", "Servant", "Minion"],
     # }
-
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    games = []
+    log_name = os.path.split(output_path)[-1].rsplit(".", 1)[0] + ".txt"
+    logger = get_logger(
+        __name__,
+        logger_level="debug",
+        console_level="debug",
+        file_level="debug",
+        log_path=os.path.join("logs", log_name),
+    )
     game_i = 0
+    if resume:
+        if os.path.exists(output_path):
+            games = [json.loads(row) for row in open(output_path)]
+            completed_games = sum([row["final_result"] for row in games])
+            n_games -= completed_games
+            game_i = int(games[-1]["id"])
+            logger.info(f"Resuming from {output_path}.")
+        else:
+            logger.info("Specified `to_resume`, but output_path is not found.")
+
     for _ in range(n_games):
         # Keep sampling if encountered error
         while True:
@@ -103,6 +127,8 @@ def main(
                             end_tokens=end_tokens,
                             temperature=temperature,
                             add_strategy_in_history=add_strategy_in_history,
+                            tokenizer_path=tokenizer_path,
+                            max_input_length=max_input_length,
                         )
                     )
                 else:
@@ -316,7 +342,6 @@ def main(
                     logger.error(e)
                     logger.info("Going to restart another game.")
                     history["status"] = "Error"
-                    games.append(history)
                     with open(output_path, "a+") as f:
                         f.write(json.dumps(history, ensure_ascii=False) + "\n")
                     break  # break the game loop to sample another game.
@@ -325,7 +350,6 @@ def main(
             if env.done:
                 history["final_result"] = env.good_victory
                 history["status"] = "Finished"
-                games.append(history)
                 logger.info(
                     f"Game {game_i} is finished. {'Good' if env.good_victory else 'Evil'} wins."
                 )
@@ -335,5 +359,4 @@ def main(
 
 
 if __name__ == "__main__":
-    logger = get_logger(__name__, logger_level="debug", console_level="debug")
     StrictFire(main)
