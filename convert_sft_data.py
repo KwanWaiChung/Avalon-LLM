@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Dict, List, Union
 from strictfire import StrictFire
 from transformers import AutoTokenizer
@@ -206,7 +207,26 @@ def get_role_belief(
 """
 
 
-def main(fn: str, out_fn: str, tokenizer_path: str):
+def split_prompt(s) -> List[str]:
+    """_summary_
+
+    Args:
+        s (_type_): _description_
+
+    Returns:
+        List[str]: intro + n-2 rounds + instruction.
+    """
+    return re.split(
+        r"(?=#### Round \d+ Discussion)|(?=### Your Instruction)", s
+    )
+
+
+def main(
+    fn: str,
+    out_fn: str,
+    tokenizer_path: str,
+    max_input_len: int = float("inf"),
+):
     data = [json.loads(row) for row in open(fn)]
     out_data = []
     for row in data:
@@ -268,9 +288,19 @@ def main(fn: str, out_fn: str, tokenizer_path: str):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     for output in out_data:
         output["input"] = ""  # unused
-        output["prompt_len"] = len(
-            tokenizer(output["instruction"])["input_ids"]
-        )
+        prompt_len = len(tokenizer(output["instruction"])["input_ids"])
+        ori_prompt_len = prompt_len
+        while prompt_len > max_input_len:
+            prompt_list = split_prompt(output["instruction"])
+            n_rounds = len(prompt_list) - 2
+            output["instruction"] = "".join(prompt_list[:1] + prompt_list[2:])
+            prompt_len = len(tokenizer(output["instruction"])["input_ids"])
+        if ori_prompt_len > prompt_len:
+            print(
+                f"Reduced original input length {ori_prompt_len} to {prompt_len}."
+            )
+        output["prompt_len"] = prompt_len
+
     max_prompt_len = max(o["prompt_len"] for o in out_data)
     mean_prompt_len = sum(o["prompt_len"] for o in out_data) / len(out_data)
     print(
