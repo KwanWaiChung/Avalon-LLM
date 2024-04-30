@@ -77,7 +77,9 @@ def main(
     if resume:
         if os.path.exists(output_path):
             games = [json.loads(row) for row in open(output_path)]
-            completed_games = sum([row["final_result"] for row in games])
+            completed_games = sum(
+                [row["status"] == "Finished" for row in games]
+            )
             n_games -= completed_games
             game_i = int(games[-1]["id"])
             logger.info(f"Resuming from {output_path}.")

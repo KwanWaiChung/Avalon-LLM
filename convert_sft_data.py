@@ -8,10 +8,9 @@ from transformers import AutoTokenizer
 def get_team_disc(
     history, round_i: int, player_i: int
 ) -> Dict[str, Union[str, int]]:
-    prompt = history["team_discs"][round_i][player_i]["instruction"]
     role: str = history["roles"][player_i][1]
     # team_diss
-    prompt = history["team_discs"][round_i][player_i]["instruction"]
+    prompt = history["team_discs"][round_i][player_i]["prompt"]
     resp: str = json.dumps(
         {
             "strategy": history["team_discs"][round_i][player_i]["strategy"],
@@ -39,7 +38,7 @@ def get_team_prop(
 
     player_i: int = history["leaders"][round_i]
     role: str = history["roles"][player_i][1]
-    prompt: str = history["team_props"][round_i]["instruction"]
+    prompt: str = history["team_props"][round_i]["prompt"]
     resp: str = json.dumps(
         {
             "rationale": history["team_props"][round_i]["rationale"],
@@ -66,9 +65,7 @@ def get_team_vote(
     player_i: int,
 ) -> Dict[str, Union[str, int]]:
     role: str = history["roles"][player_i][1]
-    prompt: str = history["team_votes"][round_i]["votes"][player_i][
-        "instruction"
-    ]
+    prompt: str = history["team_votes"][round_i]["votes"][player_i]["prompt"]
     resp: str = json.dumps(
         {
             "rationale": history["team_votes"][round_i]["votes"][player_i][
@@ -103,9 +100,7 @@ def get_quest_vote(
     role: str = history["roles"][player_i][1]
     voter_i: int = history["team_props"][round_i]["team"].index(player_i)
 
-    prompt: str = history["quest_votes"][round_i]["votes"][voter_i][
-        "instruction"
-    ]
+    prompt: str = history["quest_votes"][round_i]["votes"][voter_i]["prompt"]
     resp: str = json.dumps(
         {
             "rationale": history["quest_votes"][round_i]["votes"][voter_i][
@@ -144,7 +139,7 @@ def get_role_guess(
         return None
     src_player_i = src_player_ids.index(player_i)
     role: str = history["roles"][player_i][1]
-    prompt: str = history["role_guess"][round_i][src_player_i]["instruction"]
+    prompt: str = history["role_guess"][round_i][src_player_i]["prompt"]
     resp: str = json.dumps(
         history["role_guess"][round_i][src_player_i]["output"],
         indent=4,
@@ -174,7 +169,7 @@ def get_role_belief(
         return None
     src_player_i = src_player_ids.index(player_i)
     role: str = history["roles"][player_i][1]
-    prompt: str = history["role_belief"][round_i][src_player_i]["instruction"]
+    prompt: str = history["role_belief"][round_i][src_player_i]["prompt"]
     resp: str = json.dumps(
         history["role_belief"][round_i][src_player_i]["output"],
         indent=4,
