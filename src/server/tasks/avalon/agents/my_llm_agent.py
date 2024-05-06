@@ -20,6 +20,7 @@ from src.utils.inference import (
     OpenAIInferenceStrategy,
     TogetherInferenceStrategy,
     AnyscaleInferenceStrategy,
+    LocalInferenceStrategy,
 )
 from transformers import AutoTokenizer
 import json
@@ -65,7 +66,7 @@ class MyLLMAgent(MyAgentBase):
         add_strategy_in_history: bool = False,
         tokenizer_path: str = None,
         max_input_length: int = None,
-        **kwargs,
+        inference_kwargs: Dict[str, Any] = {},
     ):
         """
         Initialize the agent with the given parameters.
@@ -108,20 +109,27 @@ class MyLLMAgent(MyAgentBase):
 
         self.model_name = model_name
         if inference_strategy_name == "openai":
-            self.inference_strategy = OpenAIInferenceStrategy()
+            self.inference_strategy = OpenAIInferenceStrategy(
+                **inference_kwargs
+            )
         elif inference_strategy_name == "together":
-            self.inference_strategy = TogetherInferenceStrategy()
+            self.inference_strategy = TogetherInferenceStrategy(
+                **inference_kwargs
+            )
         elif inference_strategy_name == "anyscale":
-            self.inference_strategy = AnyscaleInferenceStrategy()
+            self.inference_strategy = AnyscaleInferenceStrategy(
+                **inference_kwargs
+            )
+        elif inference_strategy_name == "local":
+            self.inference_strategy = LocalInferenceStrategy(
+                **inference_kwargs
+            )
         else:
             raise OutputException(
                 f"Unrecognized strategy: {inference_strategy_name}."
             )
         self.name = name
         self.side = side  # 1 for good, 0 for evil
-        self.discussion = kwargs.pop("discussion", None)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
         self.seed = seed
         self.temperature = temperature
         self.top_p = top_p

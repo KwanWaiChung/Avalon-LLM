@@ -69,7 +69,7 @@ RETRY_JSON_PROMPT = "Your output cannot be parsed by json.loads because it conta
 GUESS_GOOD_ROLE_PROMPT = """Based on the game so far, rate how likely is Player {i} being Merlin and Servant from 1 (very unlikely) to 10 (very likely). First state your rationale and then provide the score.
 Format your output as JSON:
 {
-    "Merlin: {
+    "Merlin": {
         "rationale": <str: rationale to support being Merlin>,
         "score": <int: 1 to 10>
     },
