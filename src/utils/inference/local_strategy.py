@@ -57,7 +57,7 @@ class LocalInferenceStrategy(InferenceStrategyBase):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizer,
-        chat_template: Conversation,
+        chat_template: Conversation = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -80,7 +80,7 @@ class LocalInferenceStrategy(InferenceStrategyBase):
             elif msg["role"] == "user":
                 conv.append_message(conv.roles[0], msg["content"])
             elif msg["role"] == "assistant":
-                conv.append_message(conv.roles[0], msg["content"])
+                conv.append_message(conv.roles[1], msg["content"])
             else:
                 raise ValueError(
                     f"{msg['role']} must be one of system, user, assistant."
@@ -88,13 +88,15 @@ class LocalInferenceStrategy(InferenceStrategyBase):
         assert (
             messages[-1]["role"] == "user"
         ), "Last turn should end with user."
+        conv.append_message(conv.roles[1], None)
         return conv.get_prompt()
 
     def generate(
         self,
-        messages: List[Dict[str, str]],
-        max_tokens: int,
         model_name: str = None,
+        messages: List[Dict[str, str]] = None,
+        prompt: str = None,
+        max_tokens: int = 128,
         temperature: float = 0,
         top_p: float = 1,
         end_tokens: List[str] = [],
@@ -103,7 +105,13 @@ class LocalInferenceStrategy(InferenceStrategyBase):
         Generate a response to a list of messages.
 
         Args:
-            messages (List[Dict[str, str]]): A list of messages to include in the prompt.
+            messages: A list of dictionaries, where each dictionary corresponds to a single
+                message in the conversation and contains the 'role' and 'content' keys.
+                The 'role' key indicates the sender of the message, which can be either
+                'system', 'user', or 'assistant'. The 'content' key contains the text of
+                the message.
+            prompt (str, optional): The user's message. Defaults to None.
+            prompt: A prompt str instead of messages.
             max_tokens (int): The maximum number of tokens to generate.
             model_name (str): Not required.
             temperature (float): The temperature to use for sampling.
@@ -117,6 +125,10 @@ class LocalInferenceStrategy(InferenceStrategyBase):
                 - 'output_len': The length of the system's response in characters.
                 - 'time': The time taken to generate the response in seconds.
         """
+        if (messages is None) == (prompt is None):
+            raise ValueError(
+                "Exactly one of messages and prompt must be provided."
+            )
         start_time = time()
         stopping_criteria = StoppingCriteriaSub(self.tokenizer, end_tokens)
         do_sample = temperature > 0
@@ -129,7 +141,10 @@ class LocalInferenceStrategy(InferenceStrategyBase):
             pad_token_id=self.tokenizer.pad_token_id,
             do_sample=do_sample,
         )
-        prompt = self._get_prompt(messages=messages)
+        if prompt is None:
+            if self.chat_template is None:
+                raise ValueError("`chat_template` need to be provided.")
+            prompt = self._get_prompt(messages=messages)
         inputs = self.tokenizer(prompt, return_tensors="pt")
         device = self.model.device
         input_ids = inputs["input_ids"].to(device)

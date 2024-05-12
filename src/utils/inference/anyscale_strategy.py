@@ -30,13 +30,13 @@ class AnyscaleInferenceStrategy(OpenAIInferenceStrategy):
 
     def generate(
         self,
-        messages: List[Dict[str, str]],
-        max_tokens: int,
         model_name: str,
+        messages: List[Dict[str, str]] = None,
+        prompt: str = None,
+        max_tokens: int = 128,
         temperature: float = 0,
         end_tokens: List[str] = [],
         top_p: float = 1,
-        seed: int = 111,
         max_trial: int = 20,
     ) -> Dict[str, Any]:
         """
@@ -58,12 +58,12 @@ class AnyscaleInferenceStrategy(OpenAIInferenceStrategy):
         """
         return super().generate(
             messages=messages,
+            prompt=prompt,
             max_tokens=max_tokens,
             temperature=temperature,
             end_tokens=end_tokens,
             model_name=model_name,
             top_p=top_p,
-            seed=seed,
             max_trial=max_trial,
             base_url="https://api.endpoints.anyscale.com/v1",
         )

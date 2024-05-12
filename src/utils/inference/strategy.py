@@ -4,8 +4,9 @@ from typing import List, Dict, Any
 class InferenceStrategyBase:
     def generate(
         self,
-        messages: List[Dict[str, str]],
-        max_tokens: int,
+        messages: List[Dict[str, str]] = None,
+        prompt: str = None,
+        max_tokens: int = 128,
         temperature: float = 0,
         top_p: float = 1,
         end_tokens: List[str] = [],
@@ -19,6 +20,7 @@ class InferenceStrategyBase:
                 The 'role' key indicates the sender of the message, which can be either
                 'system', 'user', or 'assistant'. The 'content' key contains the text of
                 the message.
+            prompt (str, optional): The user's message. Defaults to None.
             max_tokens: The maximum number of tokens to generate in the response.
             temperature: The temperature parameter used to control the randomness of the
                 response. A higher temperature value results in a more random response.
@@ -36,4 +38,6 @@ class InferenceStrategyBase:
         Raises:
             NotImplementedError: If this method is not implemented in a subclass.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "This method must be implemented in a subclass"
+        )
