@@ -39,7 +39,7 @@ ASSASSINATION_PROMPT = """Now is the assassination phase. Based on the provided 
 
 
 # Info Prompts
-SUMMARIZE = "Please summarize the history. Try to keep all useful information, including your identity, other player's identities, and your observations in the game."
+SUMMARIZE = "Summarize the gameplay in 300 words, considering key results, your observations, and any insights into other players' roles or intentions, as well as any other details you think are relevant to winning. Provide your summary directly without further explanation."
 
 
 TEAM_DISCUSSION = """You are going to make some statements during this discussion to gain an advantage for your side. First, provide me your strategy in 150 words in this discussion round, and explain how you intend to use them to gain an advantage for your team. Then, provide your response in 100 words directly without further explanation. Your response should include your suggestion for the team proposal. All players can read your response so be careful not to leak important information. Ground your response on the provided game play history and do not fabricate facts.
@@ -94,6 +94,13 @@ Format your output as JSON:
         "rationale": <str: rationale to support being Minion>,
         "score": <int: 1 to 10>
     }
+}"""
+
+GUESS_ONE_ROLE_PROMPT = """Based on the game so far, rate how likely is Player {i} being {role} from 1 (very unlikely) to 10 (very likely). First state your rationale and then provide the score.
+Format your output as JSON:
+{
+    "rationale": <str: rationale to support being {role}>,
+    "score": <int: 1 to 10>
 }"""
 
 

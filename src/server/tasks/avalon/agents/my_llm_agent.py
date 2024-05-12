@@ -15,6 +15,7 @@ from src.server.tasks.avalon.my_prompts import (
     GUESS_GOOD_ROLE_PROMPT,
     GUESS_ALL_ROLE_PROMPT,
     GUESS_OTHERS_BELIEF_PRMOPT,
+    GUESS_ONE_ROLE_PROMPT,
 )
 from src.utils.inference import (
     OpenAIInferenceStrategy,
@@ -64,6 +65,7 @@ class MyLLMAgent(MyAgentBase):
         end_tokens: List[str] = [],
         to_recommend_strategy: bool = False,
         add_strategy_in_history: bool = False,
+        use_summary: bool = False,
         tokenizer_path: str = None,
         max_input_length: int = None,
         inference_kwargs: Dict[str, Any] = {},
@@ -137,6 +139,7 @@ class MyLLMAgent(MyAgentBase):
         self.end_tokens = end_tokens
         self.to_recommend_strategy = to_recommend_strategy
         self.add_strategy_in_history = add_strategy_in_history
+        self.use_summary = use_summary
         self.tokenizer = (
             AutoTokenizer.from_pretrained(tokenizer_path)
             if tokenizer_path
@@ -246,6 +249,7 @@ class MyLLMAgent(MyAgentBase):
         for i in range(n_trials):
             try:
                 output = self.inference_strategy.generate(
+                    seed=self.seed,
                     messages=messages,
                     model_name=self.model_name,
                     temperature=self.temperature,
@@ -332,6 +336,7 @@ class MyLLMAgent(MyAgentBase):
         for i in range(n_trials):
             try:
                 output = self.inference_strategy.generate(
+                    seed=self.seed,
                     messages=messages,
                     model_name=self.model_name,
                     temperature=self.temperature,
@@ -420,6 +425,7 @@ class MyLLMAgent(MyAgentBase):
                     top_p=self.top_p,
                     max_tokens=self.max_tokens,
                     end_tokens=self.end_tokens,
+                    seed=self.seed,
                 )
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
@@ -481,10 +487,13 @@ class MyLLMAgent(MyAgentBase):
         raise NotImplementedError
 
     def summarize(self) -> str:
+        prompt = self._get_prompt_prefix()
+        prompt = prompt + " " + SUMMARIZE
+
         messages = [
             {
                 "role": "user",
-                "content": self.system_info + "\n" + SUMMARIZE,
+                "content": prompt,
             }
         ]
         output = self.inference_strategy.generate(
@@ -493,25 +502,42 @@ class MyLLMAgent(MyAgentBase):
             temperature=self.temperature,
             top_p=self.top_p,
             max_tokens=self.max_tokens,
+            seed=self.seed,
         )
-        resp: str = output["output"]
+        resp: str = output["output"].strip()
         self.history["input_tokens"] += output["prompt_len"]
         self.history["output_tokens"] += output["output_len"]
-        return resp
+        return {"prompt": prompt, "resp": resp}
 
     @staticmethod
     def get_history_str(
         history: Dict[str, Any],
         strategy_idx: int = None,
         n_rounds_to_skip: int = 0,
+        summary_idx: int = None,
+        use_summary: bool = False,
     ) -> str:
         output = ["### Game Play History"]
         n_round = len(history["leaders"])
-        for i in range(n_round):
+        start_round = 0
+        if use_summary and history["summaries"]:
+            # history['summaries'][0][0] = {'prompt': ..., 'resp': ...}
+            start_round = len(history["summaries"]) - 1
+            output.append("\n#### Previous Game Play Summary")
+            output.append(
+                history["summaries"][start_round][summary_idx]["resp"]
+            )
+
+        for i in range(start_round, n_round):
             if i < n_rounds_to_skip:
                 continue
             # history.append(f"Leader is Player {history['leaders'][i]}")
-            if any(resp for resp in history["team_discs"][i]):
+            include_cur_round_diss = (
+                use_summary and i >= len(history["summaries"])
+            ) or not use_summary
+            if include_cur_round_diss and any(
+                resp for resp in history["team_discs"][i]
+            ):
                 output.append(f"\n#### Round {i + 1} Discussion")
                 if strategy_idx is not None and strategy_idx < len(
                     history["team_discs"][i]
@@ -606,6 +632,8 @@ class MyLLMAgent(MyAgentBase):
             self.history,
             self.id if self.add_strategy_in_history else None,
             n_rounds_to_skip=n_rounds_to_skip,
+            use_summary=self.use_summary,
+            summary_idx=self.id if self.use_summary else None,
         )
         prompt = self.system_info + "\n\n" + history_str
 
@@ -655,6 +683,7 @@ class MyLLMAgent(MyAgentBase):
                     top_p=self.top_p,
                     max_tokens=self.max_tokens,
                     end_tokens=self.end_tokens,
+                    seed=self.seed,
                 )
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
@@ -734,6 +763,7 @@ class MyLLMAgent(MyAgentBase):
                     top_p=self.top_p,
                     max_tokens=self.max_tokens,
                     end_tokens=self.end_tokens,
+                    seed=self.seed,
                 )
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
@@ -795,12 +825,19 @@ class MyLLMAgent(MyAgentBase):
         resp_dict["prompt"] = prompt
         return resp_dict
 
-    def guess_role(self, player_i: int) -> Dict[str, Any]:
+    def guess_role(
+        self,
+        player_i: int,
+        to_guess_multiple_player: bool = True,
+        role_to_guess: str = None,
+        n_repeat: int = 1,
+    ) -> Dict[str, Any]:
         """
         Guess the role of a player based on the game state.
 
         Args:
             player_i (int): The index of the player to guess the role for.
+
 
         Returns:
             A dictionary with keys:
@@ -815,26 +852,37 @@ class MyLLMAgent(MyAgentBase):
         """
         prompt_too_long = True
         n_rounds_to_skip = 0
+        if not to_guess_multiple_player and not role_to_guess:
+            raise ValueError(
+                "You must provide `role_to_guess` for single player role guessing."
+            )
         while prompt_too_long:
             prompt = self._get_prompt_prefix(n_rounds_to_skip)
             included_roles = []
-            if self.role == AvalonBasicConfig.ROLES_REVERSE["Servant"]:
-                prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
+
+            if not to_guess_multiple_player:
+                prompt += " " + GUESS_ONE_ROLE_PROMPT.replace(
                     "{i}", str(player_i)
-                )
-                included_roles = ["Merlin", "Servant", "Minion"]
-            elif self.role in [
-                AvalonBasicConfig.ROLES_REVERSE["Assassin"],
-                AvalonBasicConfig.ROLES_REVERSE["Minion"],
-            ]:
-                prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
-                    "{i}", str(player_i)
-                )
-                included_roles = ["Merlin", "Servant"]
+                ).replace("{role}", role_to_guess)
             else:
-                raise ValueError(
-                    "Merlin can't guess role since he already know."
-                )
+                if self.role == AvalonBasicConfig.ROLES_REVERSE["Servant"]:
+                    prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
+                        "{i}", str(player_i)
+                    )
+                    included_roles = ["Merlin", "Servant", "Minion"]
+
+                elif self.role in [
+                    AvalonBasicConfig.ROLES_REVERSE["Assassin"],
+                    AvalonBasicConfig.ROLES_REVERSE["Minion"],
+                ]:
+                    prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
+                        "{i}", str(player_i)
+                    )
+                    included_roles = ["Merlin", "Servant"]
+                else:
+                    raise ValueError(
+                        "Merlin can't guess role since he already know."
+                    )
             if self.tokenizer is not None:
                 prompt_len = len(self.tokenizer(prompt)["input_ids"])
                 prompt_too_long = prompt_len >= self.max_input_length
@@ -849,49 +897,66 @@ class MyLLMAgent(MyAgentBase):
         # json error handling
         messages = [{"role": "user", "content": prompt}]
         n_trials = 3
-        for i in range(n_trials):
-            try:
-                output = self.inference_strategy.generate(
-                    messages=messages,
-                    model_name=self.model_name,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.max_tokens,
-                    end_tokens=self.end_tokens,
-                )
-                self.history["input_tokens"] += output["prompt_len"]
-                self.history["output_tokens"] += output["output_len"]
-                resp: str = output["output"]
-                resp_dict: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
-            except json.JSONDecodeError:
-                err_msg = (
-                    f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
-                )
-                LOGGER.debug(err_msg)
-                messages.append(
-                    {"role": "assistant", "content": output["output"]}
-                )
-                messages.append({"role": "user", "content": RETRY_JSON_PROMPT})
-            else:
-                role_error = [
-                    role for role in included_roles if role not in resp_dict
-                ]
-                if role_error:
-                    err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
+        resps = []
+        for _ in range(n_repeat):
+            for i in range(n_trials):
+                try:
+                    output = self.inference_strategy.generate(
+                        messages=messages,
+                        model_name=self.model_name,
+                        temperature=self.temperature,
+                        top_p=self.top_p,
+                        max_tokens=self.max_tokens,
+                        end_tokens=self.end_tokens,
+                        seed=self.seed,
+                    )
+                    self.history["input_tokens"] += output["prompt_len"]
+                    self.history["output_tokens"] += output["output_len"]
+                    resp: str = output["output"]
+                    resp_dict: Dict[str, str] = json.loads(
+                        "{"
+                        + resp.split("```json")[-1]
+                        .split("```")[0]
+                        .split("{", 1)[-1]
+                    )
+                    resps.append(resp_dict)
+                except json.JSONDecodeError:
+                    err_msg = f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
+                    LOGGER.debug(err_msg)
                     messages.append(
                         {"role": "assistant", "content": output["output"]}
                     )
-                    messages.append({"role": "user", "content": err_msg})
+                    messages.append(
+                        {"role": "user", "content": RETRY_JSON_PROMPT}
+                    )
                 else:
-                    break
+                    if to_guess_multiple_player:
+                        role_error = [
+                            role
+                            for role in included_roles
+                            if role not in resp_dict
+                        ]
+                        if role_error:
+                            err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": output["output"],
+                                }
+                            )
+                            messages.append(
+                                {"role": "user", "content": err_msg}
+                            )
+                        else:
+                            break
+                    else:
+                        break
+            else:
+                raise OutputException(err_msg)
+        if n_repeat == 1:
+            return {"output": resps[0], "prompt": prompt}
         else:
-            raise OutputException(err_msg)
-        return {"output": resp_dict, "prompt": prompt}
+            return {"output": resps, "prompt": prompt}
 
     def guess_belief(self, player_i: int, tgt_role: str) -> Dict[str, Any]:
         prompt_too_long = True
@@ -924,6 +989,7 @@ class MyLLMAgent(MyAgentBase):
                     top_p=self.top_p,
                     max_tokens=self.max_tokens,
                     end_tokens=self.end_tokens,
+                    seed=self.seed,
                 )
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]

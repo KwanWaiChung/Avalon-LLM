@@ -1,6 +1,11 @@
+"""
+4 base LLM vs 1 fine-tuned LLM
+"""
+
 import json
 import random
 import os
+import torch
 from avalonbench_dev.avalon.engine import (
     AvalonBasicConfig,
     AvalonGameEnvironment,
@@ -13,15 +18,40 @@ from src.server.tasks.avalon.agents.my_llm_agent import (
 from src.utils.logger import get_logger
 from typing import List, Dict, Union
 from strictfire import StrictFire
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+from fastchat.conversation import get_conv_template
+
+
+def get_model(model_name, lora_path: str = None):
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto",
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
+        attn_implementation="flash_attention_2",
+    )
+    if lora_path is not None:
+        model = PeftModel.from_pretrained(
+            model,
+            lora_path,
+        )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, trust_remote_code=True
+    )
+    return model, tokenizer
 
 
 def main(
     model_name,
     inference_strategy_name,
     output_path,
+    finetuned_model_name: str,
+    chat_template: str,
+    lora_model_name: str = None,
     n_games=20,
     seed: int = 111,
-    num_llm_players: int = 5,
+    num_finetuned_players: int = 1,
     end_tokens: List[str] = [],
     temperature=0,
     tokenizer_path: str = None,
@@ -29,10 +59,7 @@ def main(
     to_discuss=True,
     add_strategy_in_history=False,
     to_guess_role: bool = False,
-    to_guess_multiple_player_role: bool = True,
-    n_guess_role_repeat: int = 1,
     to_guess_belief: bool = False,
-    use_summary: bool = False,
     resume: bool = False,
 ):
     """_summary_
@@ -41,9 +68,12 @@ def main(
         model_name (_type_): _description_
         inference_strategy_name (_type_): _description_
         output_path (_type_): _description_
+        finetuned_model_name (str): The name or path of the finetuned model.
+        lora_model_name (str): The name or path of the peft model.
         n_games (int, optional): _description_. Defaults to 20.
         seed (int, optional): _description_. Defaults to 111.
-        num_llm_players (int, optional): _description_. Defaults to 5.
+        num_finetuned_players (int, optional): Number of finetuned players.
+            The rest will be the base LLM players.
         end_tokens (List[str], optional): _description_. Defaults to [].
         temperature (int, optional): _description_. Defaults to 0.
         tokenizer_path (str): The path of the tokenizer. If provided, it will be used
@@ -52,12 +82,7 @@ def main(
         to_discuss (bool, optional): _description_. Defaults to True.
         add_strategy_in_history (bool, optional): _description_. Defaults to False.
         to_guess_role (bool): Guess other's role after discussion.
-        to_guess_multiple_player_role (bool): Guess multiple player's role simultaneously.
-        n_guess_role_repeat (int): Number of samples to generate.
-            It should be > 1 for dpo and expert iteration training.
         to_guess_belief (bool): Guess other's belief on your role.
-        use_summary (bool): Summarize gameplay as a summary and use it
-            in the prompt instead.
         resume (bool): Resume previous session. Note that the random state
             won't be recovered.
 
@@ -81,11 +106,6 @@ def main(
         file_level="debug",
         log_path=os.path.join("logs", log_name),
     )
-    if to_guess_role != to_guess_belief:
-        raise ValueError(
-            "Current only support guess role and guess belief together."
-        )
-
     game_i = 0
     if resume:
         if os.path.exists(output_path):
@@ -99,13 +119,16 @@ def main(
         else:
             logger.info("Specified `to_resume`, but output_path is not found.")
 
+    model, tokenizer = get_model(
+        model_name=finetuned_model_name, lora_path=lora_model_name
+    )
     for _ in range(n_games):
         # Keep sampling if encountered error
         while True:
             preset = seeder.choice(presets)
             env = AvalonGameEnvironment.from_presets(preset)
             pos = list(range(5))
-            llm_pos = seeder.sample(pos, k=num_llm_players)
+            llm_pos = seeder.sample(pos, k=num_finetuned_players)
             player_list = []
             history = {
                 "leaders": [],
@@ -115,7 +138,6 @@ def main(
                 "quest_votes": [],
                 "role_guess": [],
                 "role_belief": [],
-                "summaries": [],
                 "assassin": None,
                 "roles": [
                     (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
@@ -124,11 +146,39 @@ def main(
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "id": game_i + 1,
+                "is_finetuned": [],
             }
-
             for i, (role_i, role_name, side) in enumerate(env.get_roles()):
                 if i in llm_pos:
-                    # init llm
+                    history["is_finetuned"].append(True)
+                    player_list.append(
+                        MyLLMAgent(
+                            history=history,
+                            model_name=model_name,
+                            inference_strategy_name="local",
+                            name=f"Player {i}",
+                            config=env.config,
+                            id=i,
+                            side=side,
+                            seed=seed,
+                            role=role_i,
+                            end_tokens=end_tokens,
+                            temperature=temperature,
+                            add_strategy_in_history=add_strategy_in_history,
+                            tokenizer_path=tokenizer_path,
+                            max_input_length=max_input_length,
+                            inference_kwargs={
+                                "model": model,
+                                "tokenizer": tokenizer,
+                                "chat_template": get_conv_template(
+                                    chat_template
+                                ),
+                            },
+                        )
+                    )
+                else:
+                    # base llm player
+                    history["is_finetuned"].append(False)
                     player_list.append(
                         MyLLMAgent(
                             history=history,
@@ -143,32 +193,8 @@ def main(
                             end_tokens=end_tokens,
                             temperature=temperature,
                             add_strategy_in_history=add_strategy_in_history,
-                            use_summary=use_summary,
                             tokenizer_path=tokenizer_path,
                             max_input_length=max_input_length,
-                        )
-                    )
-                else:
-                    # naive players
-                    player_list.append(
-                        find_naive_agent(
-                            id=i,
-                            name=f"Player {i}",
-                            config=env.config,
-                            side=side,
-                            role=role_i,
-                            num_players=5,
-                            session=None,
-                            role_name=role_name,
-                            merlin=env.config.merlin,
-                            percival=env.config.percival,
-                            morgana=env.config.morgana,
-                            mordred=env.config.mordred,
-                            oberon=env.config.oberon,
-                            num_good=env.config.num_good,
-                            num_evil=env.config.num_evil,
-                            discussion=to_discuss,
-                            seed=seed,
                         )
                     )
                 # If the player is Merlin or Evil, let them see the sides of all players.
@@ -204,72 +230,55 @@ def main(
                                     mission_id=env.turn,
                                 )
                                 history["team_discs"][-1].append(resp)
-                        if use_summary:
-                            summaries = []
-                            for player in player_list:
-                                resp = player.summarize()
-                                summaries.append(resp)
-                            history["summaries"].append(summaries)
-
                         if to_guess_role:
                             # only ask servant and evil team to guess
                             # servant guess any others.
                             # evil team guess which good player is Merlin.
                             history["role_guess"].append([])
                             for player in player_list:
-                                if player.role_name == "Merlin":
+                                if (
+                                    player.role
+                                    == AvalonBasicConfig.ROLES_REVERSE[
+                                        "Merlin"
+                                    ]
+                                ):
                                     continue
-                                elif player.role_name == "Servant":
+                                elif (
+                                    player.role
+                                    == AvalonBasicConfig.ROLES_REVERSE[
+                                        "Servant"
+                                    ]
+                                ):
                                     # randomly pick another player
                                     player_i = seeder.choice(
                                         [i for i in range(5) if i != player.id]
                                     )
-                                    tgt_role = history["roles"][player_i][1]
-                                    # sample a false role
-                                    if seeder.random() < 0.5:
-                                        tgt_roles = set(
-                                            [
-                                                "Merlin",
-                                                "Servant",
-                                                "Assassin",
-                                                "Minion",
-                                            ]
-                                        ) - set([tgt_role])
-                                        tgt_role = seeder.choice([tgt_roles])
-                                elif player.role_name in [
-                                    "Assassin",
-                                    "Minion",
+                                elif player.role in [
+                                    AvalonBasicConfig.ROLES_REVERSE[
+                                        "Assassin"
+                                    ],
+                                    AvalonBasicConfig.ROLES_REVERSE["Minion"],
                                 ]:
                                     player_i = seeder.choice(
                                         [
                                             player.id
                                             for player in player_list
-                                            if player.role_name
-                                            in ["Servant", "Merlin"]
+                                            if player.role
+                                            in [
+                                                AvalonBasicConfig.ROLES_REVERSE[
+                                                    "Servant"
+                                                ],
+                                                AvalonBasicConfig.ROLES_REVERSE[
+                                                    "Merlin"
+                                                ],
+                                            ]
                                         ]
                                     )
-                                    tgt_role = player_list[player_i].role_name
-                                    if seeder.random() < 0.5:
-                                        tgt_role = (
-                                            "Merlin"
-                                            if tgt_role == "Servant"
-                                            else "Servant"
-                                        )
                                 else:
                                     raise NotImplementedError(
                                         f"Not implemented for {player.role}."
                                     )
-                                resp = player.guess_role(
-                                    player_i=player_i,
-                                    to_guess_multiple_player=to_guess_multiple_player_role,
-                                    role_to_guess=(
-                                        None
-                                        if to_guess_multiple_player_role
-                                        else tgt_role
-                                    ),
-                                    n_repeat=n_guess_role_repeat,
-                                )
-
+                                resp = player.guess_role(player_i)
                                 resp["src_player"] = player.id
                                 resp["tgt_player"] = player_i
                                 history["role_guess"][-1].append(resp)

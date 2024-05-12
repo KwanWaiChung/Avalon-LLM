@@ -6,6 +6,26 @@ from strictfire import StrictFire
 from transformers import AutoTokenizer
 
 
+def get_summary(
+    history, round_i: int, player_i: int
+) -> Dict[str, Union[str, int]]:
+    prompt = history["summaries"][round_i][player_i]["prompt"]
+    resp: str = json.dumps(
+        history["summaries"][round_i][player_i],
+        indent=4,
+        ensure_ascii=False,
+    )
+    output = {
+        "instruction": prompt,
+        "output": resp,
+        "game_id": history["id"],
+        "round": round_i,
+        "player_id": player_i,
+        "phase": "summarize",
+    }
+    return output
+
+
 def get_team_disc(
     history, round_i: int, player_i: int
 ) -> Dict[str, Union[str, int]]:
@@ -222,68 +242,76 @@ def split_prompt(s) -> List[str]:
 
 
 def main(
-    fn: str,
+    fns: List[str],
     out_fn: str,
     tokenizer_path: str,
     max_input_len: int = float("inf"),
 ):
-    data = [json.loads(row) for row in open(fn)]
+    if isinstance(fns, str):
+        fns = [fns]
     out_data = []
-    for row in data:
-        if row["status"] != "Finished":
-            continue
-        good_win = row["final_result"]
-        player_ids = [
-            i for i, role in enumerate(row["roles"]) if role[2] == good_win
-        ]
-        n_rounds = len(row["leaders"])
-        for round_i in range(n_rounds):
-            for player_i in player_ids:
-                # team disc
-                output = get_team_disc(
-                    history=row,
-                    round_i=round_i,
-                    player_i=player_i,
-                )
-                out_data.append(output)
-
-                # team prop
-                leader: int = row["leaders"][round_i]
-                if player_i == leader:
-                    output = get_team_prop(history=row, round_i=round_i)
+    for fn in fns:
+        data = [json.loads(row) for row in open(fn)]
+        for row in data:
+            if row["status"] != "Finished":
+                continue
+            good_win = row["final_result"]
+            player_ids = [
+                i for i, role in enumerate(row["roles"]) if role[2] == good_win
+            ]
+            n_rounds = len(row["leaders"])
+            for round_i in range(n_rounds):
+                for player_i in player_ids:
+                    # team disc
+                    output = get_team_disc(
+                        history=row,
+                        round_i=round_i,
+                        player_i=player_i,
+                    )
                     out_data.append(output)
 
-                # team vote
-                output = get_team_vote(
-                    history=row, round_i=round_i, player_i=player_i
-                )
-                out_data.append(output)
-
-                # quest vote
-                if (
-                    row["team_votes"][round_i]["result"]
-                    and player_i in row["team_props"][round_i]["team"]
-                ):
-                    output = get_quest_vote(
+                    output = get_summary(
                         history=row, round_i=round_i, player_i=player_i
                     )
                     out_data.append(output)
 
-                # role guess
-                output = get_role_guess(
-                    history=row,
-                    round_i=round_i,
-                    player_i=player_i,
-                )
-                if output is not None:
+                    # team prop
+                    leader: int = row["leaders"][round_i]
+                    if player_i == leader:
+                        output = get_team_prop(history=row, round_i=round_i)
+                        out_data.append(output)
+
+                    # team vote
+                    output = get_team_vote(
+                        history=row, round_i=round_i, player_i=player_i
+                    )
                     out_data.append(output)
 
-                # belief guess
-                output = get_role_belief(
-                    history=row, round_i=round_i, player_i=player_i
-                )
-                if output is not None:
-                    out_data.append(output)
+                    # quest vote
+                    if (
+                        row["team_votes"][round_i]["result"]
+                        and player_i in row["team_props"][round_i]["team"]
+                    ):
+                        output = get_quest_vote(
+                            history=row, round_i=round_i, player_i=player_i
+                        )
+                        out_data.append(output)
+
+                    # role guess
+                    output = get_role_guess(
+                        history=row,
+                        round_i=round_i,
+                        player_i=player_i,
+                    )
+                    if output is not None:
+                        out_data.append(output)
+
+                    # belief guess
+                    output = get_role_belief(
+                        history=row, round_i=round_i, player_i=player_i
+                    )
+                    if output is not None:
+                        out_data.append(output)
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     for output in out_data:
