@@ -16,7 +16,7 @@ from strictfire import StrictFire
 from tqdm import tqdm
 
 
-DEBUG = True
+DEBUG = False
 
 if not DEBUG:
     from vllm import LLM, SamplingParams
@@ -938,6 +938,7 @@ def main(
 
     # sample until finish
     pbar = tqdm(total=n_games, desc="Sampling games")
+    count = 0
     while reqs:
         new_reqs = []
         for req in reqs:
@@ -958,16 +959,19 @@ def main(
                 req.history["output_tokens"] += len(resp.outputs[0].token_ids)
         pbar.n = req_processor.n_finished_games
         pbar.refresh()
+        count += 1
 
-        # debug
-        with open(output_path, "w") as f:
-            f.write(
-                "\n".join(
-                    [json.dumps(row, ensure_ascii=False) for row in histories]
+        if count % 5 == 0:
+            with open(output_path, "w") as f:
+                f.write(
+                    "\n".join(
+                        [json.dumps(row, ensure_ascii=False) for row in histories]
+                    )
                 )
-            )
-        with open("outputs/reqs.pkl", "wb") as f:
-            pickle.dump(reqs, f)
+            logger.info(f"Games saved to {output_path}.")
+        # debug
+        # with open("outputs/reqs.pkl", "wb") as f:
+        #     pickle.dump(reqs, f)
         # debug
 
     # save all
