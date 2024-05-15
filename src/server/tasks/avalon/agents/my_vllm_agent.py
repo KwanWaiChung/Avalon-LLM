@@ -709,7 +709,10 @@ class VllmAgent:
                     req.buffer["msg"] = messages
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
-                elif any(mem < 0 or mem >= 5 for mem in resp_dict["team"]):
+                elif any(
+                    not int(mem) or mem < 0 or mem >= 5
+                    for mem in resp_dict["team"]
+                ):
                     err_msg = f"Proposed team contains invalid player ids: {resp_dict['team']}. Max player id is 4."
                     LOGGER.debug(err_msg)
                     messages = req.buffer["msg"]
