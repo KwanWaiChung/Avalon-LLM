@@ -729,6 +729,25 @@ class VllmAgent:
                     req.buffer["msg"] = messages
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
+                elif any(k not in resp_dict for k in ["rationale", "team"]):
+                    keys = []
+                    if "rationale" not in resp_dict:
+                        keys.append("rationale")
+                    if "team" not in resp_dict:
+                        keys.append("team")
+                    err_msg = f"{keys} should be included in your answer."
+                    LOGGER.debug(err_msg)
+                    messages = req.buffer["msg"]
+                    messages.append({"role": "assistant", "content": req.resp})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": err_msg,
+                        }
+                    )
+                    req.buffer["msg"] = messages
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                 else:
                     req.resp = resp_dict
                     prompt = req.buffer["prompt"]
