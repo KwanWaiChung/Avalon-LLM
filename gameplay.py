@@ -204,13 +204,6 @@ def main(
                                     mission_id=env.turn,
                                 )
                                 history["team_discs"][-1].append(resp)
-                        if use_summary:
-                            summaries = []
-                            for player in player_list:
-                                resp = player.summarize()
-                                summaries.append(resp)
-                            history["summaries"].append(summaries)
-
                         if to_guess_role:
                             # only ask servant and evil team to guess
                             # servant guess any others.
@@ -289,6 +282,13 @@ def main(
                                 resp["tgt_player"] = player_i
                                 resp["tgt_role"] = role
                                 history["role_belief"][-1].append(resp)
+                        if use_summary:
+                            summaries = []
+                            for player in player_list:
+                                resp = player.summarize()
+                                summaries.append(resp)
+                            history["summaries"].append(summaries)
+
                         # after discussion, choose team (propose_team)
                         team: Dict[str, Union[str, List[int]]] = player_list[
                             leader

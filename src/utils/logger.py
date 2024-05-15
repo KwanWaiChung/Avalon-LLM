@@ -58,7 +58,7 @@ def get_logger(
         logger.setLevel(level_map[logger_level or "warning"])
 
     formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        "%(asctime)s - %(name)s - %(levelname)s [%(filename)s:%(lineno)d] - %(message)s"
     )
 
     # set up the logfile handler

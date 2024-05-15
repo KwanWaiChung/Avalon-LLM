@@ -46,7 +46,7 @@ TEAM_DISCUSSION = """You are going to make some statements during this discussio
 Format your output as JSON:  
 {
     "strategy": <str>,
-    "response: <str>
+    "response": <str>
 }"""
 
 
@@ -59,6 +59,8 @@ Format your output as JSON:
 where `team` is the list of player ids of the proposed team. For example, [0, 2, 3] denotes Players 0, 2, and 3 on the team."""
 
 PROPOSE_TEAM_INVALID_SIZE_PROMPT = """You must propose a team with {target_num_player} players, but you provided {num_player} players in your response."""
+
+PROPOSE_TEAM_DUPLICATE_PROMPT = """You must propose a team with {target_num_player} unique players, but you have duplicate players in your previous proposal."""
 
 PROPOSE_TEAM_INVALID_PLAYER_PROMPT = (
     """You can only choose player with id from 0 to {max_player_id}."""
