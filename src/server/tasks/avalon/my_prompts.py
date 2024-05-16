@@ -21,14 +21,14 @@ CHOOSE_TEAM_ACTION = """Please choose {} players from player ids 0 to {} as team
 TEAM_VOTE = """Review the game history, your role, and previous discussions among players. Decide whether to vote `approve` or `reject` the Leader's proposed Quest team with Players {team}. Note that the vote is anonymous. Players will only know the number of `approve` and `reject` without knowing who vote them. Provide your rationale and your final answer as `approve` or `reject`. Format your output as JSON: 
 {
     "rationale": <str>,
-    "vote: <str, either `approve` or `reject`>
+    "vote": <str, either `approve` or `reject`>
 }"""
 
 
 VOTE_MISSION_ACTION = """The team with players {team} was approved, which includes you. Review the game history, your role, and previous discussions among players. Decide whether to vote `pass` or `fail` for the current Quest. Note that the vote is anonymous. Players will only know the number of `pass` and `fail` without knowing who vote them. Provide your rationale and your final answer as `pass` of `fail`. Format your output as JSON: 
 {
     "rationale": <str>,
-    "vote: <str, either `pass` or `fail`>
+    "vote": <str, either `pass` or `fail`>
 }"""
 
 ASSASSINATION_PROMPT = """Now is the assassination phase. Based on the provided game play history, which player do you think is Merlin? Provide your rationale and your final answer. The valid player ids are 0 to {max_player_id}. Format your output as JSON:

@@ -1,5 +1,5 @@
 from typing import List, Literal, Dict, Any, Union
-from avalonbench_dev.avalon.engine import AvalonBasicConfig
+from src.server.tasks.avalon.engine import AvalonBasicConfig
 from src.utils.vllm_misc import Request, RequestStatus
 from src.server.tasks.avalon.agents.agent import Agent
 from src.server.tasks.avalon.my_prompts import (
