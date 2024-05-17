@@ -2,15 +2,114 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from typing import List
+from typing import List, Dict
 from avalonbench_dev.avalon.engine import AvalonGameEnvironment
 from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
 from vllm_gameplay import RequestProcessor
 from src.utils.vllm_misc import Request, RequestStatus
+from src.utils.logger import get_logger
 from fastchat.conversation import get_conv_template
 from src.server.tasks.avalon.my_prompts import SUMMARIZE
 from copy import deepcopy
 import json
+
+
+def test_too_many_error():
+    preset = json.load(open("data/avalon/dev.json"))[0]
+    env = AvalonGameEnvironment.from_presets(preset)
+    history = {
+        "leaders": [0],
+        "team_discs": [
+            {
+                0: {
+                    "strategy": "Player 0 strategy at round 1.",
+                    "response": "Player 0 response at round 1.",
+                },
+                1: {
+                    "strategy": "Player 1 strategy at round 1.",
+                    "response": "Player 1 response at round 1.",
+                },
+                2: {
+                    "strategy": "Player 2 strategy at round 1.",
+                    "response": "Player 2 response at round 1.",
+                },
+                3: {
+                    "strategy": "Player 3 strategy at round 1.",
+                    "response": "Player 3 response at round 1.",
+                },
+                4: {
+                    "strategy": "Player 4 strategy at round 1.",
+                    "response": "Player 4 response at round 1.",
+                },
+            }
+        ],
+        "team_props": [],
+        "team_votes": [],
+        "quest_votes": [],
+        "role_guess": [],
+        "role_belief": [],
+        "summaries": [],
+        "assassin": None,
+        "roles": [
+            (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
+            for role_tuple in env.get_roles()
+        ],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "id": 1,
+    }
+    env.phase = 1
+    # (prompt, resp, game idx, history, env, status, buffer)
+    # buffer mainly for storing temporary messages.
+    # The status code performs error checking and processing.
+    req = Request(
+        prompt=None,
+        resp=None,
+        game_idx=0,
+        player_idx=0,
+        history=history,
+        env=env,
+        status=RequestStatus.TEAM_VOTE_GET_PROMPT,
+    )
+    agent = VllmAgent(
+        max_trials=3,
+        add_strategy_in_history=False,
+        use_summary=True,
+        chat_template=get_conv_template("llama-3"),
+    )
+    req_processor = RequestProcessor(
+        agent=agent,
+        logger=logger,
+        to_discuss=True,
+        add_strategy_in_history=False,
+        to_guess_role=True,
+        to_guess_multiple_player_role=False,
+        n_guess_role_repeat=1,
+        to_guess_belief=True,
+        use_summary=True,
+    )
+    req_queue = []
+    req_processor.process_req(
+        req,
+        req_queue,
+    )
+    req = req_queue[0]
+    original_prompt = req.prompt
+    for i in range(3):
+        req.resp = "rubbish"
+        req_queue = []
+        req_processor.process_req(
+            req,
+            req_queue,
+        )
+        req = req_queue[0]
+        assert req.status == RequestStatus.TEAM_VOTE_CHECK_ERROR
+        if i == 2:
+            assert req.buffer["trial"] == 0
+            assert req.prompt == original_prompt
+        else:
+            assert req.buffer["trial"] == i + 1
+            assert req.prompt != original_prompt
 
 
 def test_team_discussion_round1():
@@ -53,6 +152,7 @@ def test_team_discussion_round1():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -103,9 +203,25 @@ def test_team_discussion_round1():
             req,
             req_queue,
         )
+
         if i == 4:
-            # role guess, without merlin
-            assert len(req_queue) == 4
+            # 4 role guess, without merlin. Merlin's role guess forward to
+            # belief guess (+1), and an additional role guess for the
+            # reference answer for the belief guess.
+            assert len(req_queue) == 6
+            src_player_ids = []
+            for new_req in req_queue:
+                if new_req.status == RequestStatus.ROLE_GUESS_CHECK_ERROR:
+                    src_player_ids.append(new_req.player_idx)
+                elif new_req.status == RequestStatus.ROLE_BELIEF_CHECK_ERROR:
+                    rb_src_player_id = new_req.player_idx
+                    rb_tgt_player_id = new_req.buffer["tgt_player_i"]
+            merlin_id = preset["role_names"].index("Merlin")
+            assert sorted(src_player_ids) == sorted(
+                [i for i in range(5) if i != merlin_id] + [rb_tgt_player_id]
+            )
+            assert rb_src_player_id == merlin_id
+
             new_req = req_queue[0]
             assert (
                 """#### Round 1 Discussion
@@ -121,10 +237,10 @@ Player 4: player 4's response"""
             assert len(req_queue) == 1
             new_req = req_queue[0]
             assert new_req.status == RequestStatus.TEAM_DISCUSSION_CHECK_ERROR
-        assert discuss_prompt in new_req.prompt
-        disc = history["team_discs"][0][i]
-        assert disc["strategy"] == resp["strategy"]
-        assert disc["response"] == resp["response"]
+            assert discuss_prompt in new_req.prompt
+            disc = history["team_discs"][0][i]
+            assert disc["strategy"] == resp["strategy"]
+            assert disc["response"] == resp["response"]
 
 
 def test_summarize_round1():
@@ -179,6 +295,7 @@ def test_summarize_round1():
 
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -224,12 +341,39 @@ Player 4: Player 4 response at round 1."""
         req,
         req_queue,
     )
-    assert len(req_queue) == 1
-    new_req = req_queue[0]
+    assert len(req_queue) == 0
     assert len(history["summaries"][0]) == 1
     summary = history["summaries"][0][0]
     assert summary["resp"] == resp
-    assert new_req.status == RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
+
+    # summaries of the rest of the players
+    req_queue = []
+    for i in range(1, 5):
+        req = Request(
+            prompt=None,
+            resp=None,
+            game_idx=0,
+            player_idx=i,
+            history=history,
+            env=env,
+            status=RequestStatus.SUMMARIZE_GET_PROMPT,
+        )
+        req_processor.process_req(
+            req,
+            req_queue,
+        )
+    assert len(req_queue) == 4
+
+    new_req_queue = []
+    for req in req_queue:
+        req.resp = f"player {req.player_idx}'s summary."
+        req_processor.process_req(
+            req,
+            new_req_queue,
+        )
+
+    assert len(new_req_queue) == 1
+    assert new_req_queue[0].status == RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
 
 
 def test_guess_role_round1():
@@ -292,6 +436,7 @@ def test_guess_role_round1():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -324,16 +469,164 @@ def test_guess_role_round1():
         req,
         req_queue,
     )
-    assert len(req_queue) == 1
-    new_req = req_queue[0]
+    filtered_req_queue = [req for req in req_queue if req.to_forward]
+    assert len(filtered_req_queue) == 1
+    new_req = filtered_req_queue[0]
     assert history == new_req.history
     assert len(history["role_guess"][0]) == 1
-    role_guess = history["role_guess"][0][0]
-    assert role_guess["output"] == resp
+    role_guess: List[Dict] = history["role_guess"][0][0]
+    assert role_guess[0]["output"] == resp
     assert new_req.status == RequestStatus.ROLE_BELIEF_CHECK_ERROR
 
 
-def test_guess_belief_round1():
+def test_guess_belief_merlin_round1():
+    preset = json.load(open("data/avalon/dev.json"))[0]
+    env = AvalonGameEnvironment.from_presets(preset)
+    merlin_id = preset["role_names"].index("Merlin")
+    non_merlin_id = [i for i in range(5) if i != merlin_id]
+    history = {
+        "leaders": [0],
+        "team_discs": [
+            {
+                0: {
+                    "strategy": "Player 0 strategy at round 1.",
+                    "response": "Player 0 response at round 1.",
+                },
+                1: {
+                    "strategy": "Player 1 strategy at round 1.",
+                    "response": "Player 1 response at round 1.",
+                },
+                2: {
+                    "strategy": "Player 2 strategy at round 1.",
+                    "response": "Player 2 response at round 1.",
+                },
+                3: {
+                    "strategy": "Player 3 strategy at round 1.",
+                    "response": "Player 3 response at round 1.",
+                },
+                4: {
+                    "strategy": "Player 4 strategy at round 1.",
+                    "response": "Player 4 response at round 1.",
+                },
+            }
+        ],
+        "team_props": [],
+        "team_votes": [],
+        "quest_votes": [],
+        "role_guess": [],
+        "role_belief": [],
+        "summaries": [],
+        "assassin": None,
+        "roles": [
+            (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
+            for role_tuple in env.get_roles()
+        ],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "id": 1,
+    }
+    merlin_id = preset["role_names"].index("Merlin")
+    agent = VllmAgent(
+        add_strategy_in_history=False,
+        use_summary=True,
+        chat_template=get_conv_template("llama-3"),
+    )
+    req_processor = RequestProcessor(
+        agent=agent,
+        logger=logger,
+        to_discuss=True,
+        add_strategy_in_history=False,
+        to_guess_role=True,
+        to_guess_multiple_player_role=False,
+        n_guess_role_repeat=1,
+        to_guess_belief=True,
+        use_summary=True,
+    )
+
+    # first player belief  guess
+    history["role_guess"].append(
+        {
+            non_merlin_id[0]: [
+                {
+                    "prompt": "whatever",
+                    "output": {
+                        "rationale": "",
+                    },
+                    "src_player": non_merlin_id[0],
+                    "tgt_player": merlin_id,
+                }
+            ]
+        }
+    )
+    # does not duplicate role guess
+    req = Request(
+        prompt=None,
+        resp=None,
+        game_idx=0,
+        player_idx=merlin_id,
+        history=history,
+        env=env,
+        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+        args={"tgt_player_i": non_merlin_id[1]},
+    )
+    req_queue = []
+    req_processor.process_req(
+        req,
+        req_queue,
+    )
+    assert len(req_queue) == 2
+    assert set([req.status for req in req_queue]) == set(
+        [
+            RequestStatus.ROLE_BELIEF_CHECK_ERROR,
+            RequestStatus.ROLE_GUESS_CHECK_ERROR,
+        ]
+    )
+    for req in req_queue:
+        assert "from 1 (very unlikely) to 10 (very likely)" in req.prompt
+        if req.status == RequestStatus.ROLE_BELIEF_CHECK_ERROR:
+            # proper role belief response
+            resp = {
+                "rationale": "Player 0's rationale",
+                "score": 5,
+            }
+            req.resp = json.dumps(resp, indent=4)
+            new_req = req
+
+    req_queue = []
+    req_processor.process_req(
+        new_req,
+        req_queue,
+    )
+    assert len(req_queue) == 1
+    new_req = req_queue[0]
+    assert history == new_req.history
+    assert len(history["role_belief"][0]) == 1
+    role_guess = history["role_belief"][0][merlin_id]
+    assert role_guess["output"] == resp
+    assert new_req.status == RequestStatus.SUMMARIZE_CHECK_ERROR
+
+    # does not duplicate role guess
+    history["role_belief"] = []
+    req = Request(
+        prompt=None,
+        resp=None,
+        game_idx=0,
+        player_idx=merlin_id,
+        history=history,
+        env=env,
+        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+        args={"tgt_player_i": non_merlin_id[0]},
+    )
+    req_queue = []
+    req_processor.process_req(
+        req,
+        req_queue,
+    )
+    assert len(req_queue) == 1
+    assert req_queue[0].status == RequestStatus.ROLE_BELIEF_CHECK_ERROR
+
+
+def test_guess_belief_servant_round1():
     preset = json.load(open("data/avalon/dev.json"))[0]
     env = AvalonGameEnvironment.from_presets(preset)
     history = {
@@ -377,15 +670,7 @@ def test_guess_belief_round1():
         "output_tokens": 0,
         "id": 1,
     }
-    req = Request(
-        prompt=None,
-        resp=None,
-        game_idx=0,
-        player_idx=0,
-        history=history,
-        env=env,
-        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-    )
+    merlin_id = preset["role_names"].index("Merlin")
     agent = VllmAgent(
         add_strategy_in_history=False,
         use_summary=True,
@@ -393,6 +678,7 @@ def test_guess_belief_round1():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -403,35 +689,165 @@ def test_guess_belief_round1():
     )
 
     # first player belief  guess
+    servant_id = preset["role_names"].index("Servant")
+    minion_id = preset["role_names"].index("Minion")
+    merlin_id = preset["role_names"].index("Merlin")
+    # tgt is merlin
+    req = Request(
+        prompt=None,
+        resp=None,
+        game_idx=0,
+        player_idx=servant_id,
+        history=history,
+        env=env,
+        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+        args={"tgt_player_i": merlin_id},
+    )
     req_queue = []
     req_processor.process_req(
         req,
         req_queue,
     )
     assert len(req_queue) == 1
-    new_req = req_queue[0]
-    assert new_req.status == RequestStatus.ROLE_BELIEF_CHECK_ERROR
-    assert "from 1 (very unlikely) to 10 (very likely)" in new_req.prompt
+    assert req_queue[0].status == RequestStatus.ROLE_BELIEF_CHECK_ERROR
 
-    # proper role guess response
-    resp = {
-        "rationale": "Player 0's rationale",
-        "score": 5,
-    }
-    new_req.resp = json.dumps(resp, indent=4)
-    req = new_req
+    # tgt is others (e.g. minion)
+    history["role_belief"] = []
+    req = Request(
+        prompt=None,
+        resp=None,
+        game_idx=0,
+        player_idx=servant_id,
+        history=history,
+        env=env,
+        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+        args={"tgt_player_i": minion_id},
+    )
     req_queue = []
     req_processor.process_req(
         req,
         req_queue,
     )
-    assert len(req_queue) == 1
-    new_req = req_queue[0]
-    assert history == new_req.history
-    assert len(history["role_belief"][0]) == 1
-    role_guess = history["role_belief"][0][0]
-    assert role_guess["output"] == resp
-    assert new_req.status == RequestStatus.SUMMARIZE_CHECK_ERROR
+    assert len(req_queue) == 2
+    assert set([req.status for req in req_queue]) == set(
+        [
+            RequestStatus.ROLE_BELIEF_CHECK_ERROR,
+            RequestStatus.ROLE_GUESS_CHECK_ERROR,
+        ]
+    )
+
+
+def test_guess_belief_minion_round1():
+    preset = json.load(open("data/avalon/dev.json"))[0]
+    env = AvalonGameEnvironment.from_presets(preset)
+    history = {
+        "leaders": [0],
+        "team_discs": [
+            {
+                0: {
+                    "strategy": "Player 0 strategy at round 1.",
+                    "response": "Player 0 response at round 1.",
+                },
+                1: {
+                    "strategy": "Player 1 strategy at round 1.",
+                    "response": "Player 1 response at round 1.",
+                },
+                2: {
+                    "strategy": "Player 2 strategy at round 1.",
+                    "response": "Player 2 response at round 1.",
+                },
+                3: {
+                    "strategy": "Player 3 strategy at round 1.",
+                    "response": "Player 3 response at round 1.",
+                },
+                4: {
+                    "strategy": "Player 4 strategy at round 1.",
+                    "response": "Player 4 response at round 1.",
+                },
+            }
+        ],
+        "team_props": [],
+        "team_votes": [],
+        "quest_votes": [],
+        "role_guess": [],
+        "role_belief": [],
+        "summaries": [],
+        "assassin": None,
+        "roles": [
+            (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
+            for role_tuple in env.get_roles()
+        ],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "id": 1,
+    }
+    agent = VllmAgent(
+        add_strategy_in_history=False,
+        use_summary=True,
+        chat_template=get_conv_template("llama-3"),
+    )
+    req_processor = RequestProcessor(
+        agent=agent,
+        logger=logger,
+        to_discuss=True,
+        add_strategy_in_history=False,
+        to_guess_role=True,
+        to_guess_multiple_player_role=False,
+        n_guess_role_repeat=1,
+        to_guess_belief=True,
+        use_summary=True,
+    )
+
+    # first player belief  guess
+    servant_id = preset["role_names"].index("Servant")
+    minion_id = preset["role_names"].index("Minion")
+    ass_id = preset["role_names"].index("Assassin")
+    merlin_id = preset["role_names"].index("Merlin")
+    # tgt is merlin
+    for tgt_id in [merlin_id, minion_id, ass_id]:
+        history["role_belief"] = []
+        req = Request(
+            prompt=None,
+            resp=None,
+            game_idx=0,
+            player_idx=minion_id,
+            history=history,
+            env=env,
+            status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+            args={"tgt_player_i": tgt_id},
+        )
+        req_queue = []
+        req_processor.process_req(
+            req,
+            req_queue,
+        )
+        assert len(req_queue) == 1
+        assert req_queue[0].status == RequestStatus.ROLE_BELIEF_CHECK_ERROR
+
+    # tgt is servant
+    history["role_belief"] = []
+    req = Request(
+        prompt=None,
+        resp=None,
+        game_idx=0,
+        player_idx=servant_id,
+        history=history,
+        env=env,
+        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+        args={"tgt_player_i": servant_id},
+    )
+    req_queue = []
+    req_processor.process_req(
+        req,
+        req_queue,
+    )
+    assert len(req_queue) == 2
+    assert set([req.status for req in req_queue]) == set(
+        [
+            RequestStatus.ROLE_BELIEF_CHECK_ERROR,
+            RequestStatus.ROLE_GUESS_CHECK_ERROR,
+        ]
+    )
 
 
 def test_team_proposal_round1():
@@ -485,6 +901,7 @@ def test_team_proposal_round1():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -574,6 +991,7 @@ def test_team_vote_round1():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -685,6 +1103,7 @@ def test_quest_vote_round1():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=True,
@@ -837,6 +1256,7 @@ def test_assassin():
     )
     req_processor = RequestProcessor(
         agent=agent,
+        logger=logger,
         to_discuss=True,
         add_strategy_in_history=False,
         to_guess_role=False,
@@ -870,11 +1290,15 @@ def test_assassin():
 
 
 if __name__ == "__main__":
-    test_team_discussion_round1()
-    test_guess_role_round1()
-    test_guess_belief_round1()
-    test_summarize_round1()
-    test_team_proposal_round1()
-    test_team_vote_round1()
-    test_quest_vote_round1()
-    test_assassin()
+    logger = get_logger(logger_level="debug", console_level="info")
+    test_too_many_error()
+    # test_team_discussion_round1()
+    # test_guess_role_round1()
+    # test_guess_belief_merlin_round1()
+    # test_guess_belief_servant_round1()
+    # test_guess_belief_minion_round1()
+    # test_summarize_round1()
+    # test_team_proposal_round1()
+    # test_team_vote_round1()
+    # test_quest_vote_round1()
+    # test_assassin()

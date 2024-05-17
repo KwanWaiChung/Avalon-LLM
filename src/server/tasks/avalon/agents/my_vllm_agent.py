@@ -35,12 +35,14 @@ class VllmAgent:
         seed: int = 111,
         add_strategy_in_history: bool = False,
         use_summary: bool = False,
+        max_trials: int = 3,
     ):
         """
         Initialize the agent with the given parameters.
 
         Args:
             to_recommend_strategy (bool): Whether to prompt the recommended strategy.
+            max_trials (int): The maximum number of trials to restart prompt.
 
 
         """
@@ -49,6 +51,7 @@ class VllmAgent:
         self.seeder = random.Random(111)
         self.add_strategy_in_history = add_strategy_in_history
         self.use_summary = use_summary
+        self.max_trials = max_trials
 
     def _get_prompt_from_msg(self, messages: List[Dict[str, str]]) -> str:
         """
@@ -183,6 +186,17 @@ class VllmAgent:
                 )
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached for json parsing. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.TEAM_VOTE_CHECK_ERROR
+
                 LOGGER.debug(
                     f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 )
@@ -194,6 +208,17 @@ class VllmAgent:
                 return prompt, RequestStatus.TEAM_VOTE_CHECK_ERROR
             else:
                 if resp_dict["vote"] not in ["approve", "reject"]:
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached for team vote error. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.TEAM_VOTE_CHECK_ERROR
                     error_msg = f"The vote should be either `approve` or `reject`, but you provided `{resp_dict['vote']}`."
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
@@ -253,6 +278,16 @@ class VllmAgent:
                 )
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached for json parsing. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.TEAM_VOTE_CHECK_ERROR
                 LOGGER.debug(
                     f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 )
@@ -264,6 +299,17 @@ class VllmAgent:
                 return prompt, RequestStatus.QUEST_VOTE_CHECK_ERROR
             else:
                 if resp_dict["vote"] not in ["pass", "fail"]:
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached for quest vote outcome. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.QUEST_VOTE_CHECK_ERROR
                     error_msg = f"The vote should be either `pass` or `fail`, but you provided `{resp_dict['vote']}`."
                     LOGGER.debug(
                         f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
@@ -324,6 +370,16 @@ class VllmAgent:
                 )
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached for json parsing. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.ASSASSIN_CHECK_ERROR
                 LOGGER.debug(
                     f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 )
@@ -338,6 +394,17 @@ class VllmAgent:
                     resp_dict["merlin"] < 0
                     or resp_dict["merlin"] >= num_players
                 ):
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.ASSASSIN_CHECK_ERROR
                     err_msg = f"Invalid player id: {resp_dict['merlin']}. Max player id is 4."
                     LOGGER.debug(err_msg)
                     messages = req.buffer["msg"]
@@ -619,6 +686,16 @@ class VllmAgent:
                 req.resp = resp
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.TEAM_DISCUSSION_CHECK_ERROR
                 LOGGER.debug(
                     f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 )
@@ -665,6 +742,16 @@ class VllmAgent:
                 )
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.TEAM_DISCUSSION_CHECK_ERROR
                 LOGGER.debug(
                     f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 )
@@ -676,6 +763,17 @@ class VllmAgent:
                 return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
             else:
                 if len(resp_dict["team"]) != team_size:
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                     err_msg = f"Team size not matched. We need a team with {team_size} players, but received {resp_dict['team']}."
                     LOGGER.debug(err_msg)
                     messages = req.buffer["msg"]
@@ -694,6 +792,17 @@ class VllmAgent:
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                 elif len(set(resp_dict["team"])) != team_size:
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                     err_msg = f"Duplicate members found on the team. We need a team with {team_size} unique players, but received {resp_dict['team']}."
                     LOGGER.debug(err_msg)
                     messages = req.buffer["msg"]
@@ -710,10 +819,21 @@ class VllmAgent:
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                 elif any(
-                    not int(mem) or mem < 0 or mem >= 5
+                    not isinstance(mem, int) or mem < 0 or mem >= 5
                     for mem in resp_dict["team"]
                 ):
                     err_msg = f"Proposed team contains invalid player ids: {resp_dict['team']}. Max player id is 4."
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                     LOGGER.debug(err_msg)
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
@@ -730,6 +850,17 @@ class VllmAgent:
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                 elif any(k not in resp_dict for k in ["rationale", "team"]):
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                     keys = []
                     if "rationale" not in resp_dict:
                         keys.append("rationale")
@@ -781,7 +912,10 @@ class VllmAgent:
         n_rounds_to_skip = 0
         role_name: str = req.history["roles"][req.player_idx][1]
         if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
-            if role_name == "Servant":
+            if "tgt_player_i" in req.args:
+                player_i = req.args["tgt_player_i"]
+                tgt_role: str = req.history["roles"][player_i][1]
+            elif role_name == "Servant":
                 # randomly pick another player
                 player_i = self.seeder.choice(
                     [i for i in range(5) if i != req.player_idx]
@@ -862,6 +996,16 @@ class VllmAgent:
                 )
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                 LOGGER.debug(
                     f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 )
@@ -879,6 +1023,21 @@ class VllmAgent:
                         if role not in resp_dict
                     ]
                     if role_error:
+                        req.buffer["trial"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
                         messages = req.buffer["msg"]
                         messages.append(
@@ -893,6 +1052,21 @@ class VllmAgent:
                         return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                 else:
                     if "score" not in resp_dict:
+                        req.buffer["trial"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `score`."
                         messages = req.buffer["msg"]
                         messages.append(
@@ -906,6 +1080,21 @@ class VllmAgent:
                         prompt = self._get_prompt_from_msg(req.buffer["msg"])
                         return prompt, 1
                     elif "rationale" not in resp_dict:
+                        req.buffer["trial"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `rationale`."
                         messages = req.buffer["msg"]
                         messages.append(
@@ -923,6 +1112,24 @@ class VllmAgent:
                         or resp_dict["score"] < 1
                         or resp_dict["score"] > 10
                     ):
+                        req.buffer["trial"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return (
+                                prompt,
+                                RequestStatus.ROLE_GUESS_CHECK_ERRORkj,
+                            )
                         err_msg = "Your response should provide an integer score from 1 to 10."
                         messages = req.buffer["msg"]
                         messages.append(
@@ -940,9 +1147,12 @@ class VllmAgent:
                 return prompt, RequestStatus.ROLE_GUESS_SUCCEED
 
     def guess_belief(self, req: Request) -> Dict[str, Any]:
-        tgt_player_i = self.seeder.choice(
-            [i for i in range(5) if i != req.player_idx]
-        )
+        if "tgt_player_i" in req.args:
+            tgt_player_i = req.args["tgt_player_i"]
+        else:
+            tgt_player_i = self.seeder.choice(
+                [i for i in range(5) if i != req.player_idx]
+            )
         tgt_role = self.seeder.choice(["Merlin", "Servant", "Minion"])
         if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
             prompt = self._get_prompt_prefix(
@@ -971,6 +1181,16 @@ class VllmAgent:
                 )
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.ROLE_BELIEF_CHECK_ERROR
                 err_msg = f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 LOGGER.debug(err_msg)
                 messages = req.buffer["msg"]
@@ -981,6 +1201,17 @@ class VllmAgent:
                 return prompt, RequestStatus.ROLE_BELIEF_CHECK_ERROR
             else:
                 if resp_dict["score"] < 1 or resp_dict["score"] > 10:
+                    req.buffer["trial"] += 1
+                    if req.buffer["trial"] >= self.max_trials:
+                        LOGGER.debug(
+                            f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                        )
+                        req.buffer["msg"] = req.buffer["msg"][:1]
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        req.buffer["prompt"] = prompt
+                        req.buffer["trial"] = 0
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.ROLE_BELIEF_CHECK_ERROR
                     req.buffer["trial"] += 1
                     messages = req.buffer["msg"]
                     err_msg = f"score must be from 1 to 10. Received: {resp_dict['score']}."

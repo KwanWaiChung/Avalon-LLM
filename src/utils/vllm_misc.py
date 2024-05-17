@@ -1,5 +1,5 @@
 from avalonbench_dev.avalon.engine import AvalonGameEnvironment
-from typing import Dict
+from typing import Dict, Any
 from enum import Enum
 
 
@@ -13,7 +13,9 @@ class Request:
         history: Dict,
         env: AvalonGameEnvironment,
         status: int,
-        buffer=None,
+        to_forward: bool = True,
+        args: Dict[str, Any] = None,
+        buffer: Dict[str, Any] = None,
     ):
         self.prompt = prompt
         self.resp = resp
@@ -22,8 +24,12 @@ class Request:
         self.history = history
         self.env = env
         self.status = status
+        self.to_forward = to_forward
         if buffer is None:
             buffer = {}
+        if args is None:
+            args = {}
+        self.args = args
         self.buffer = buffer
 
     def __str__(self):
