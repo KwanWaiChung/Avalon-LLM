@@ -1071,7 +1071,9 @@ class VllmAgent:
                             )
                             return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `score`."
-                        LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1100,7 +1102,9 @@ class VllmAgent:
                             )
                             return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `rationale`."
-                        LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1136,7 +1140,9 @@ class VllmAgent:
                                 RequestStatus.ROLE_GUESS_CHECK_ERRORkj,
                             )
                         err_msg = "Your response should provide an integer score from 1 to 10."
-                        LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1159,16 +1165,23 @@ class VllmAgent:
             tgt_player_i = self.seeder.choice(
                 [i for i in range(5) if i != req.player_idx]
             )
-        tgt_role = self.seeder.choice(["Merlin", "Servant", "Minion"])
+        tgt_role = self.seeder.choice(
+            ["Merlin", "Servant", "Minion", "Assassin"]
+        )
         if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
                 history=req.history,
                 player_list=req.env.get_roles(),
             )
-            prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
-                "{i}", str(tgt_player_i)
-            ).replace("{role}", tgt_role)
+            if tgt_role in ["Minion", "Assassin"]:
+                prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
+                    "{i}", str(tgt_player_i)
+                ).replace("{role}", "Minion or Assassin")
+            else:
+                prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
+                    "{i}", str(tgt_player_i)
+                ).replace("{role}", tgt_role)
             messages = [{"role": "user", "content": prompt}]
             req.buffer["trial"] = 0
             req.buffer["prompt"] = prompt

@@ -893,6 +893,8 @@ class RequestProcessor:
                     )
                     return
                 elif req.env.done:
+                    req.history["final_result"] = req.env.good_victory
+                    req.history["status"] = "Finished"
                     self.finish_game(req)
                     return
                 else:
