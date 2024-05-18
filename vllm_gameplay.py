@@ -55,9 +55,10 @@ class SamplingParamsDummy:
 
 class VllmWrapper:
     # this class wraps local inference pretending to be vllm
-    def __init__(self, strategy, model_name):
+    def __init__(self, strategy, model_name, end_tokens=[]):
         self.strategy = strategy
         self.model_name = model_name
+        self.end_tokens = end_tokens
 
     def generate(
         self, prompts: List[str], sampling_params, *args, **kwargs
@@ -74,6 +75,7 @@ class VllmWrapper:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                end_tokens=self.end_tokens,
             )
             outputs.append(
                 RequestOutput(prompt=prompt, outputs=[output["output"]])
@@ -325,7 +327,7 @@ class RequestProcessor:
                 resp = req.resp
                 resp["prompt"] = prompt
                 req.history["team_discs"][n_round - 1][player_id] = resp
-                if req.player_idx == 4:
+                if len(req.history["team_discs"][n_round - 1]) == 5:
                     for i in range(5):
                         self.process_req(
                             req=Request(
@@ -1013,6 +1015,7 @@ def main(
                 chat_template=get_conv_template("llama-3"),
             ),
             model_name=model_name,
+            end_tokens=[tokenizer.eos_token],
         )
         sampling_params = SamplingParamsDummy(
             temperature=temperature, top_p=top_p, max_tokens=max_tokens
