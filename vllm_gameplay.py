@@ -1040,7 +1040,7 @@ def main(
     req_processor = RequestProcessor(
         agent=agent,
         to_discuss=to_discuss,
-        add_strategy_in_history=False,
+        add_strategy_in_history=add_strategy_in_history,
         to_guess_role=to_guess_role,
         to_guess_multiple_player_role=to_guess_multiple_player_role,
         n_guess_role_repeat=1,

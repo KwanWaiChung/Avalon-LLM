@@ -519,8 +519,9 @@ class VllmAgent:
                 resp for resp in history["team_discs"][i].values()
             ):
                 output.append(f"\n#### Round {i + 1} Discussion")
-                if strategy_idx is not None and strategy_idx < len(
-                    history["team_discs"][i]
+                if (
+                    strategy_idx is not None
+                    and strategy_idx in history["team_discs"][i]
                 ):
                     output.append(
                         f"**Strategy:** {history['team_discs'][i][strategy_idx]['strategy']}"

@@ -1,9 +1,14 @@
 import json
 import os
 import re
+import random
 from typing import Dict, List, Union
 from strictfire import StrictFire
 from transformers import AutoTokenizer
+from src.server.tasks.avalon.my_prompts import GUESS_ONE_ROLE_PROMPT
+
+
+seeder = random.Random(111)
 
 
 def get_summary(
@@ -11,7 +16,7 @@ def get_summary(
 ) -> Dict[str, Union[str, int]]:
     prompt = history["summaries"][round_i][player_i]["prompt"]
     resp: str = json.dumps(
-        history["summaries"][round_i][player_i],
+        history["summaries"][round_i][player_i]["resp"],
         indent=4,
         ensure_ascii=False,
     )
@@ -161,8 +166,16 @@ def get_role_guess(
     src_player_i = src_player_ids.index(player_i)
     role: str = history["roles"][player_i][1]
     prompt: str = history["role_guess"][round_i][src_player_i]["prompt"]
+
+    tgt_role: str = seeder.choice(
+        list(history["role_guess"][round_i][src_player_i]["output"].keys())
+    )
+    new_prompt = GUESS_ONE_ROLE_PROMPT.replace(
+        "{i}", str(history["role_belief"][round_i][src_player_i]["tgt_player"])
+    ).replace("{role}", tgt_role)
+    prompt = prompt.split("Based on the game so far")[0] + new_prompt
     resp: str = json.dumps(
-        history["role_guess"][round_i][src_player_i]["output"],
+        history["role_guess"][round_i][src_player_i]["output"][tgt_role],
         indent=4,
         ensure_ascii=False,
     )
@@ -328,11 +341,17 @@ def main(
                 f"Reduced original input length {ori_prompt_len} to {prompt_len}."
             )
         output["prompt_len"] = prompt_len
+        output["output_len"] = len(tokenizer(output["output"])["input_ids"])
 
     max_prompt_len = max(o["prompt_len"] for o in out_data)
     mean_prompt_len = sum(o["prompt_len"] for o in out_data) / len(out_data)
     print(
         f"max_prompt_len: {max_prompt_len}, mean_prompt_len: {mean_prompt_len}"
+    )
+    max_output_len = max(o["output_len"] for o in out_data)
+    mean_output_len = sum(o["output_len"] for o in out_data) / len(out_data)
+    print(
+        f"max_output_len: {max_output_len}, mean_output_len: {mean_output_len}"
     )
     print(f"Converted {len(out_data)} data.")
 
