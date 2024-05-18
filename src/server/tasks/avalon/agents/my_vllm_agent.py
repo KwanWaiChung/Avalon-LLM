@@ -223,7 +223,7 @@ class VllmAgent:
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append({"role": "user", "content": error_msg})
-                    LOGGER.debug(error_msg)
+                    LOGGER.debug(error_msg + f" Trial: {req.buffer['trial']}")
                     req.buffer["msg"] = messages
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_VOTE_CHECK_ERROR
@@ -312,7 +312,7 @@ class VllmAgent:
                         return prompt, RequestStatus.QUEST_VOTE_CHECK_ERROR
                     error_msg = f"The vote should be either `pass` or `fail`, but you provided `{resp_dict['vote']}`."
                     LOGGER.debug(
-                        f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
+                        f"`{req.resp}` vote should be either `pass` or `fail`. Trial: {req.buffer['trial']}"
                     )
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
@@ -406,7 +406,7 @@ class VllmAgent:
                         prompt = self._get_prompt_from_msg(req.buffer["msg"])
                         return prompt, RequestStatus.ASSASSIN_CHECK_ERROR
                     err_msg = f"Invalid player id: {resp_dict['merlin']}. Max player id is 4."
-                    LOGGER.debug(err_msg)
+                    LOGGER.debug(err_msg + f"Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append(
@@ -775,7 +775,7 @@ class VllmAgent:
                         prompt = self._get_prompt_from_msg(req.buffer["msg"])
                         return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                     err_msg = f"Team size not matched. We need a team with {team_size} players, but received {resp_dict['team']}."
-                    LOGGER.debug(err_msg)
+                    LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append(
@@ -804,7 +804,7 @@ class VllmAgent:
                         prompt = self._get_prompt_from_msg(req.buffer["msg"])
                         return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                     err_msg = f"Duplicate members found on the team. We need a team with {team_size} unique players, but received {resp_dict['team']}."
-                    LOGGER.debug(err_msg)
+                    LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append(
@@ -834,7 +834,7 @@ class VllmAgent:
                         req.buffer["trial"] = 0
                         prompt = self._get_prompt_from_msg(req.buffer["msg"])
                         return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
-                    LOGGER.debug(err_msg)
+                    LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append(
@@ -867,7 +867,7 @@ class VllmAgent:
                     if "team" not in resp_dict:
                         keys.append("team")
                     err_msg = f"{keys} should be included in your answer."
-                    LOGGER.debug(err_msg)
+                    LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append(
@@ -1039,6 +1039,9 @@ class VllmAgent:
                             )
                             return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1068,6 +1071,7 @@ class VllmAgent:
                             )
                             return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `score`."
+                        LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1096,6 +1100,7 @@ class VllmAgent:
                             )
                             return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                         err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `rationale`."
+                        LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1131,6 +1136,7 @@ class VllmAgent:
                                 RequestStatus.ROLE_GUESS_CHECK_ERRORkj,
                             )
                         err_msg = "Your response should provide an integer score from 1 to 10."
+                        LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                         messages = req.buffer["msg"]
                         messages.append(
                             {
@@ -1215,7 +1221,7 @@ class VllmAgent:
                     req.buffer["trial"] += 1
                     messages = req.buffer["msg"]
                     err_msg = f"score must be from 1 to 10. Received: {resp_dict['score']}."
-                    LOGGER.debug(err_msg)
+                    LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages.append({"role": "assistant", "content": req.resp})
                     messages.append(
                         {
