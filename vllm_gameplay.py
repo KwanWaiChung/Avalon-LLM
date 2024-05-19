@@ -426,7 +426,8 @@ class RequestProcessor:
                 req,
                 to_guess_multiple_player=self.to_guess_multiple_player_role,
             )
-            if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
+            if status == RequestStatus.ROLE_GUESS_SUCCEED:
+                resp = req.resp
                 if req.player_idx in req.history["role_guess"][
                     n_round - 1
                 ] and any(
@@ -435,25 +436,22 @@ class RequestProcessor:
                         req.player_idx
                     ]
                 ):
-                    assert not req.to_forward
                     if self.logger:
                         self.logger.info(
-                            f"status = {req.status} but role_guess is done. Since req.forward == False, we will terminate it."
+                            f"status = {req.status} but role_guess is done. Going to ignore this request."
                         )
-                    return
-            if status == RequestStatus.ROLE_GUESS_SUCCEED:
-                resp = req.resp
-                req.history["role_guess"][n_round - 1].setdefault(
-                    req.player_idx, []
-                ).append(
-                    {
-                        "prompt": prompt,
-                        "output": resp,
-                        "src_player": req.player_idx,
-                        "tgt_player": req.buffer["tgt_player_i"],
-                        "tgt_role": req.buffer["tgt_role"],
-                    }
-                )
+                else:
+                    req.history["role_guess"][n_round - 1].setdefault(
+                        req.player_idx, []
+                    ).append(
+                        {
+                            "prompt": prompt,
+                            "output": resp,
+                            "src_player": req.player_idx,
+                            "tgt_player": req.buffer["tgt_player_i"],
+                            "tgt_role": req.buffer["tgt_role"],
+                        }
+                    )
                 if req.to_forward:
                     self.process_req(
                         req=Request(
