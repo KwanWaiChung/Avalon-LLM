@@ -163,6 +163,7 @@ class PPOTrainer(BaseTrainer):
     def __init__(
         self,
         config: Optional[PPOConfig] = None,
+        loglikelihood_batch_size: int = None,
         model: Optional[PreTrainedModelWrapper] = None,
         ref_model: Optional[PreTrainedModelWrapper] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
@@ -199,6 +200,7 @@ class PPOTrainer(BaseTrainer):
                 Learning rate scheduler used for training.
         """
         super().__init__(config)
+        self.loglikelihood_batch_size = loglikelihood_batch_size
 
         # initial seed for reproducible experiments
         set_seed(config.seed)
@@ -857,6 +859,7 @@ class PPOTrainer(BaseTrainer):
                 responses,
                 model_inputs,
                 return_logits=full_kl_penalty,
+                use_tqdm=True,
             )
 
         timing["time/ppo/forward_pass"] = time.time() - t
@@ -1165,7 +1168,7 @@ class PPOTrainer(BaseTrainer):
                 - all_values (`torch.FloatTensor`): Values of the responses, shape (`batch_size`, `response_length`)
         """
         bs = len(queries)
-        fbs = self.config.mini_batch_size
+        fbs = self.loglikelihood_batch_size or self.config.mini_batch_size
         all_logprobs = []
         all_logits = []
         all_masks = []
@@ -1240,6 +1243,7 @@ class PPOTrainer(BaseTrainer):
             all_logprobs.append(logprobs)
             all_masks.append(masks)
 
+        torch.cuda.empty_cache()
         return (
             torch.cat(all_logprobs),
             torch.cat(all_logits)[:, :-1] if return_logits else None,

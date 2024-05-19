@@ -10,7 +10,6 @@ from trl import (
     PPOConfig,
     AutoModelForCausalLMWithValueHead,
     create_reference_model,
-    PPOTrainer,
 )
 from ppo_trainer import PPOTrainer
 from strictfire import StrictFire
@@ -677,6 +676,7 @@ def main(
     lora_path: str = None,
     lora_config: Dict[str, Any] = None,
     mini_batch_size: int = 1,
+    loglikelihood_batch_size: int = 1,  # usually n_device * mini_bz
     grad_accum: int = 32,
     n_epochs: int = 4,
     n_samples: int = -1,  # -1 means all.
@@ -716,13 +716,17 @@ def main(
         gradient_accumulation_steps=grad_accum,
         ppo_epochs=n_epochs,
         log_with="wandb",
-        task_name="RoleGuessPPO",
     )
     Accelerator().state.deepspeed_plugin.deepspeed_config[
         "train_micro_batch_size_per_gpu"
     ] = mini_batch_size
     ppo_trainer = PPOTrainer(
-        ppo_config, model, model_ref, tokenizer, dataset=dataset
+        config=ppo_config,
+        model=model,
+        ref_model=model_ref,
+        tokenizer=tokenizer,
+        dataset=dataset,
+        loglikelihood_batch_size=loglikelihood_batch_size,
     )
 
     # train model for one step with ppo
