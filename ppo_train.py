@@ -51,6 +51,28 @@ is_deepspeed_used = accelerator.distributed_type == "DEEPSPEED" and hasattr(
 )
 
 
+class DebugDataset(Dataset):
+    def __init__(
+        self,
+        n_samples: int,
+        context_length=1500,
+        resp_length=500,
+    ):
+        self.prompt_tensors = [torch.tensor([10] * context_length)] * n_samples
+        self.response_tensors = [torch.tensor([10] * resp_length)] * n_samples
+        self.reward_tensors = [torch.tensor(1.0)] * n_samples
+
+    def __getitem__(self, index) -> Any:
+        return (
+            self.prompt_tensors[index],
+            self.response_tensors[index],
+            self.reward_tensors[index],
+        )
+
+    def __len__(self) -> int:
+        return len(self.prompt_tensors)
+
+
 class PPODataset(Dataset):
     def __init__(
         self,
@@ -366,7 +388,7 @@ def get_model(
         model = get_peft_model(model, lora_config)
 
     rl_model = AutoModelForCausalLMWithValueHead.from_pretrained(model)
-    return rl_model, None
+    # return rl_model, None
     rl_model_ref = AutoModelForCausalLMWithValueHead.from_pretrained(
         model
     ).eval()
@@ -661,20 +683,24 @@ def main(
     include_guess_role: bool = False,
     include_guess_belief: bool = False,
     save_path: str = "saves/avalon_ppo",
+    debug: bool = False,
 ):
     model, model_ref = get_model(
         model_name, lora_path=lora_path, lora_config=lora_config
     )
     tokenizer = get_tokenizer(model_name)
-    dataset = PPODataset(
-        filename,
-        mini_batch_size=mini_batch_size,
-        grad_accum=grad_accum,
-        n_samples=n_samples,
-        tokenizer=tokenizer,
-        include_guess_role=include_guess_role,
-        include_guess_belief=include_guess_belief,
-    )
+    if debug:
+        dataset = DebugDataset(n_samples=n_samples)
+    else:
+        dataset = PPODataset(
+            filename,
+            mini_batch_size=mini_batch_size,
+            grad_accum=grad_accum,
+            n_samples=n_samples,
+            tokenizer=tokenizer,
+            include_guess_role=include_guess_role,
+            include_guess_belief=include_guess_belief,
+        )
 
     # create a ppo trainer
     trainable_params, all_param = count_parameters(model)
@@ -713,8 +739,9 @@ def main(
         dataset.response_tensors,
         dataset.reward_tensors,
     )
-    ppo_trainer.save_pretrained(save_path)
-    print(f"Trained model saved to {save_path}.")
+    if accelerator.local_process_index == 0:
+        ppo_trainer.save_pretrained(save_path)
+        print(f"Trained model saved to {save_path}.")
 
 
 if __name__ == "__main__":
