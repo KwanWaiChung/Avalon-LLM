@@ -3,7 +3,7 @@ import torch
 import random
 import json
 from accelerate import Accelerator
-from typing import Tuple
+from typing import Tuple, Dict, Any
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from trl import (
     PPOConfig,
@@ -30,9 +30,43 @@ ROLE_GUESS_SCORE = {
     10: 5,
 }
 
+ROLE_BELIEF_SCORE = {
+    0: 5,
+    1: 4,
+    2: 3,
+    3: 2,
+    4: 1,
+    5: -1,
+    6: -2,
+    7: -3,
+    8: -4,
+    9: -5,
+}
+
+
+def convert_int_keys(d):
+    new_dict = {}
+    for k, v in d.items():
+        key = int(k) if k.isdigit() else k
+        if isinstance(v, dict):
+            new_dict[key] = convert_int_keys(v)
+        elif isinstance(v, list):
+            new_dict[key] = [
+                convert_int_keys(i) if isinstance(i, dict) else i for i in v
+            ]
+        else:
+            new_dict[key] = v
+    return new_dict
+
 
 # get models
-def get_model(model_name: str, lora_path: str = None):
+def get_model(
+    model_name: str, lora_path: str = None, lora_config: Dict[str, Any] = None
+):
+    if (lora_path is None) == (lora_config is None):
+        raise ValueError(
+            "You must only either specify `lora_path` of `lora_config`."
+        )
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         # device_map="auto",
@@ -45,15 +79,15 @@ def get_model(model_name: str, lora_path: str = None):
     if lora_path is not None:
         model = PeftModel.from_pretrained(model, lora_path, is_trainable=True)
     else:
-        peft_kwargs = {
-            "r": 8,
-            "target_modules": "q_proj,v_proj",
-            "lora_alpha": 16,
-        }
+        # peft_kwargs = {
+        #     "r": 8,
+        #     "target_modules": "q_proj,v_proj",
+        #     "lora_alpha": 16,
+        # }
         lora_config = LoraConfig(
             task_type="CAUSAL_LM",
             inference_mode=False,
-            **peft_kwargs,
+            **lora_config,
         )
         model = get_peft_model(model, lora_config)
 
@@ -72,6 +106,7 @@ def get_data(
     filename: str, include_guess_role: str, include_guess_belief: str
 ):
     data = [json.loads(row) for row in open(filename)]
+    data = [convert_int_keys(row) for row in data]
     out_data = []
     for row in data:
         good_win = row["final_result"]
@@ -163,34 +198,40 @@ def get_data(
         # role_guess
         if include_guess_role:
             for guess_round in row["role_guess"]:
-                for src_player_i, guess_dicts in guess_round["votes"].items():
+                for src_player_i, guess_dicts in guess_round.items():
+                    tgt_players = set()
                     for guess_dict in guess_dicts:
                         # [output, prompt, src_player:int, tgt_player:int]
-                        sign: bool = (
-                            guess_dict["tgt_role"]
-                            == roles[guess_dict["tgt_player"]]
-                        )
-                        out_data.append(
-                            (
-                                guess_dict["prompt"],
-                                json.dumps(
-                                    guess_dict["output"],
-                                    indent=4,
-                                    ensure_ascii=False,
-                                ),
-                                int(sign)
-                                * ROLE_GUESS_SCORE[guess_dict["score"]],
+                        if guess_dict["tgt_player"] not in tgt_players:
+                            # duplicate guesses exist in previous code
+                            sign: bool = (
+                                guess_dict["tgt_role"]
+                                == roles[guess_dict["tgt_player"]]
                             )
-                        )
+                            out_data.append(
+                                (
+                                    guess_dict["prompt"],
+                                    json.dumps(
+                                        guess_dict["output"],
+                                        indent=4,
+                                        ensure_ascii=False,
+                                    ),
+                                    int(sign)
+                                    * ROLE_GUESS_SCORE[
+                                        guess_dict["output"]["score"]
+                                    ],
+                                )
+                            )
+                            tgt_players.add(guess_dict["tgt_player"])
 
         # role_belief
         if include_guess_belief:
             for round_i, belief_round in enumerate(row["role_belief"]):
-                for src_player_i, belief_dict in belief_round["votes"].items():
+                for src_player_i, belief_dict in belief_round.items():
                     # [output, prompt, src_player:int, tgt_player:int]
                     tgt_player: int = belief_dict["tgt_player"]
-                    tgt_role: str = roles[tgt_player]
-                    src_role: str = roles[src_player_i]
+                    tgt_role: str = roles[int(tgt_player)]
+                    src_role: str = roles[int(src_player_i)]
                     to_guess_role: str = belief_dict["tgt_role"]
                     if src_role == "Servant" and tgt_role == "Merlin":
                         if to_guess_role == "Servant":
@@ -212,7 +253,7 @@ def get_data(
                             tgt_player
                         ]:
                             guesses.append(role_guess["tgt_player"])
-                            if role_guess["tgt_player"] == src_player_i:
+                            if role_guess["tgt_player"] == int(src_player_i):
                                 gold_score: int = role_guess["output"]["score"]
                                 break
                         else:
@@ -232,7 +273,11 @@ def get_data(
                                 indent=4,
                                 ensure_ascii=False,
                             ),
-                            abs(belief_dict["score"] - gold_score),
+                            ROLE_BELIEF_SCORE[
+                                abs(
+                                    belief_dict["output"]["score"] - gold_score
+                                )
+                            ],
                         )
                     )
         # summaries
@@ -330,6 +375,7 @@ def main(
     model_name,
     filename,
     lora_path: str = None,
+    lora_config: Dict[str, Any] = None,
     mini_batch_size: int = 1,
     grad_accum: int = 32,
     n_epochs: int = 4,
@@ -338,8 +384,10 @@ def main(
     include_guess_belief: bool = False,
     save_path: str = "saves/avalon_ppo",
 ):
-    # model, model_ref = get_model(model_name, lora_path=lora_path)
-    # # tokenizer = get_tokenizer(model_name)
+    model, model_ref = get_model(
+        model_name, lora_path=lora_path, lora_config=lora_config
+    )
+    tokenizer = get_tokenizer(model_name)
 
     dataset = get_data(
         filename,
