@@ -743,7 +743,13 @@ def main(
         dataset.response_tensors,
         dataset.reward_tensors,
     )
-    if accelerator.local_process_index == 0:
+    if accelerator.is_main_process:
+        ppo_trainer.log_stats(
+            stats=train_stats,
+            batch={},
+            rewards=dataset.reward_tensors,
+            columns_to_log=[],
+        )
         ppo_trainer.save_pretrained(save_path)
         print(f"Trained model saved to {save_path}.")
 
