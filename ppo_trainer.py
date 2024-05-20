@@ -201,6 +201,7 @@ class PPOTrainer(BaseTrainer):
         """
         super().__init__(config)
         self.loglikelihood_batch_size = loglikelihood_batch_size
+        self.update_step = 0
 
         # initial seed for reproducible experiments
         set_seed(config.seed)
@@ -853,14 +854,18 @@ class PPOTrainer(BaseTrainer):
             #     )
 
             # changed
-            ref_logprobs, ref_logits_or_none, _, _ = self.batched_forward_pass(
-                self.ref_model,
-                queries,
-                responses,
-                model_inputs,
-                return_logits=full_kl_penalty,
-                use_tqdm=True,
-            )
+            # Since we use the same model as reference model, we don't have to compute again.
+            ref_logprobs, ref_logits_or_none = all_logprobs, logits_or_none
+
+            # recompute if needed
+            # ref_logprobs, ref_logits_or_none, _, _ = self.batched_forward_pass(
+            #     self.ref_model,
+            #     queries,
+            #     responses,
+            #     model_inputs,
+            #     return_logits=full_kl_penalty,
+            #     use_tqdm=True,
+            # )
 
         timing["time/ppo/forward_pass"] = time.time() - t
 
@@ -918,6 +923,7 @@ class PPOTrainer(BaseTrainer):
             if early_stop:
                 break
             b_inds = np.random.permutation(bs)
+            batch_stats = []
             for backward_batch_start in range(
                 0, bs, self.config.backward_batch_size
             ):
@@ -982,6 +988,28 @@ class PPOTrainer(BaseTrainer):
                             mini_batch_dict["returns"],
                         )
                         all_stats.append(train_stats)
+                        batch_stats.append(train_stats)
+                    if self.accelerator.sync_gradients:
+                        # do some logging
+                        # I suppose to gather all those loss, kl, values
+                        self.update_step += 1
+                        metric_dicts = {"update_step": self.update_step}
+                        for k in [
+                            "loss/policy",
+                            "loss/value",
+                            "loss/total",
+                            "policy/entropy",
+                            "policy/clipfrac",
+                            "returns/mean",
+                            "returns/var",
+                        ]:
+                            metric_dicts[k] = (
+                                sum([stat[k] for stat in batch_stats])
+                                / self.accelerator.gradient_accumulation_steps
+                            )
+                        metric_dicts = self.gather_stats(metric_dicts)
+                        self.accelerator.log(metric_dicts)
+                        batch_stats = []
                     pbar.update(1)
             # typically, early stopping is done at the epoch level
             if self.config.early_stopping:
@@ -1705,11 +1733,41 @@ class PPOTrainer(BaseTrainer):
             f.write(model_card_content)
 
     def _save_pretrained(self, save_directory: str) -> None:
-        self.accelerator.unwrap_model(self.model).save_pretrained(
-            save_directory
+        self.accelerator.wait_for_everyone()
+
+        # Save only the base model, so that is could be loaded directly
+        # with Hugging Face's `from_pretrained` method
+        state_dict = self.accelerator.get_state_dict(self.model, unwrap=True)
+        if state_dict is not None:
+            state_dict = {
+                k.split("pretrained_model.")[1]: v
+                for k, v in state_dict.items()
+                if "pretrained_model." in k
+            }
+
+        # valuehead model
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+
+        # if is peft model, torch.save unwrapped_model.state_dict()
+        if self.is_peft_model and self.accelerator.is_main_process:
+            save_path = os.path.join(save_directory, "pytorch_model.bin")
+            torch.save(unwrapped_model.state_dict(), save_path)
+        unwrapped_model.pretrained_model.save_pretrained(
+            save_directory,
+            save_function=self.accelerator.save,
+            is_main_process=self.accelerator.is_main_process,
+            state_dict=state_dict,
         )
-        self.tokenizer.save_pretrained(save_directory)
-        self.create_model_card(save_directory)
+
+        if self.accelerator.is_main_process:
+            self.tokenizer.save_pretrained(save_directory)
+
+        # below are the original code
+        # self.accelerator.unwrap_model(self.model).save_pretrained(
+        #     save_directory
+        # )
+        # self.tokenizer.save_pretrained(save_directory)
+        # self.create_model_card(save_directory)
 
     def _show_tokens(self, tokens, masks):
         from rich import print

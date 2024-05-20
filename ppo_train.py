@@ -673,6 +673,7 @@ def count_parameters(model: torch.nn.Module) -> Tuple[int, int]:
 def main(
     model_name,
     filename,
+    run_name,
     lora_path: str = None,
     lora_config: Dict[str, Any] = None,
     mini_batch_size: int = 1,
@@ -715,11 +716,14 @@ def main(
         mini_batch_size=mini_batch_size,
         gradient_accumulation_steps=grad_accum,
         ppo_epochs=n_epochs,
+        tracker_project_name="avalon",
+        tracker_kwargs={"wandb": {"name": run_name}},
         log_with="wandb",
     )
-    Accelerator().state.deepspeed_plugin.deepspeed_config[
-        "train_micro_batch_size_per_gpu"
-    ] = mini_batch_size
+    if accelerator.distributed_type == "DEEPSPEED":
+        accelerator.state.deepspeed_plugin.deepspeed_config[
+            "train_micro_batch_size_per_gpu"
+        ] = mini_batch_size
     ppo_trainer = PPOTrainer(
         config=ppo_config,
         model=model,
@@ -743,14 +747,14 @@ def main(
         dataset.response_tensors,
         dataset.reward_tensors,
     )
+    # ppo_trainer.log_stats(
+    #     stats=train_stats,
+    #     batch={},
+    #     rewards=dataset.reward_tensors,
+    #     columns_to_log=[],
+    # )
+    ppo_trainer.save_pretrained(save_path)
     if accelerator.is_main_process:
-        ppo_trainer.log_stats(
-            stats=train_stats,
-            batch={},
-            rewards=dataset.reward_tensors,
-            columns_to_log=[],
-        )
-        ppo_trainer.save_pretrained(save_path)
         print(f"Trained model saved to {save_path}.")
 
 
