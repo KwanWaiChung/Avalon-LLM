@@ -25,8 +25,10 @@ DEFAULT_KEY_PATH = os.path.join(
 
 class OpenAIInferenceStrategy(InferenceStrategyBase):
     def __init__(self, key_path: str = DEFAULT_KEY_PATH):
-        keys = json.load(open(key_path))
-        self.key_pool = KeyPool(keys=keys)
+        self.key_pool = None
+        if key_path is not None:
+            keys = json.load(open(key_path))
+            self.key_pool = KeyPool(keys=keys)
 
     def generate(
         self,
@@ -39,6 +41,7 @@ class OpenAIInferenceStrategy(InferenceStrategyBase):
         top_p: float = 1,
         seed: int = 111,
         max_trial: int = 20,
+        chat_mode: bool = True,
         base_url: str = None,
     ) -> Dict[str, Any]:
         """
@@ -77,21 +80,34 @@ class OpenAIInferenceStrategy(InferenceStrategyBase):
                 "Exactly one of messages and prompt must be provided."
             )
         start_time = time()
+        api_key = "EMPTY"
         for _ in range(max_trial):
-            api_key = self.key_pool.pop()
+            if self.key_pool:
+                api_key = self.key_pool.pop()
             client = OpenAI(api_key=api_key, base_url=base_url)
-            if prompt is not None:
-                messages = [{"role": "user", "content": prompt}]
             try:
-                completion = client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    seed=seed,
-                    top_p=top_p,
-                    stop=end_tokens,
-                )
+                if chat_mode:
+                    if prompt is not None:
+                        messages = [{"role": "user", "content": prompt}]
+                    completion = client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        seed=seed,
+                        top_p=top_p,
+                        stop=end_tokens,
+                    )
+                else:
+                    completion = client.completions.create(
+                        model=model_name,
+                        prompt=prompt,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        seed=seed,
+                        top_p=top_p,
+                        stop=end_tokens,
+                    )
             except (
                 APIConnectionError,
                 RateLimitError,
@@ -99,14 +115,16 @@ class OpenAIInferenceStrategy(InferenceStrategyBase):
                 APITimeoutError,
                 AuthenticationError,
             ) as e:
-                self.key_pool.block(api_key, 5)
+                if self.key_pool:
+                    self.key_pool.block(api_key, 5)
                 logger.exception(
                     f"{api_key} has error {e.__class__.__name__}. Block it for 5"
                     " seconds."
                 )
                 sleep(1)
             except Exception as e:
-                self.key_pool.free(api_key)
+                if self.key_pool:
+                    self.key_pool.free(api_key)
                 logger.debug(f"Free {api_key}.")
                 raise e
             else:
@@ -114,10 +132,14 @@ class OpenAIInferenceStrategy(InferenceStrategyBase):
                 completion = completion.dict()
                 prompt_len = completion["usage"]["prompt_tokens"]
                 num_output_tokens = completion["usage"]["completion_tokens"]
-                resp = completion["choices"][0]["message"]["content"]
-                self.key_pool.free(api_key)
-                logger.debug(f"Free {api_key}.")
-                sleep(0.5)
+                if chat_mode:
+                    resp = completion["choices"][0]["message"]["content"]
+                else:
+                    resp = completion["choices"][0]["text"]
+                if self.key_pool:
+                    self.key_pool.free(api_key)
+                    logger.debug(f"Free {api_key}.")
+                    sleep(0.5)
                 return {
                     "output": resp,
                     "prompt_len": prompt_len,

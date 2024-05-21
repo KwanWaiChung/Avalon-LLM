@@ -1007,7 +1007,8 @@ class PPOTrainer(BaseTrainer):
                                 sum([stat[k] for stat in batch_stats])
                                 / self.accelerator.gradient_accumulation_steps
                             )
-                        metric_dicts = self.gather_stats(metric_dicts)
+                        if self.is_distributed:
+                            metric_dicts = self.gather_stats(metric_dicts)
                         self.accelerator.log(metric_dicts)
                         batch_stats = []
                     pbar.update(1)

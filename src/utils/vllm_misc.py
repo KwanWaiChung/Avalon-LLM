@@ -16,6 +16,7 @@ class Request:
         to_forward: bool = True,
         args: Dict[str, Any] = None,
         buffer: Dict[str, Any] = None,
+        prev=None,
     ):
         self.prompt = prompt
         self.resp = resp
@@ -31,6 +32,7 @@ class Request:
             args = {}
         self.args = args
         self.buffer = buffer
+        self.prev = prev
 
     def __str__(self):
         return f"Player: {self.player_idx}. Status: {self.status}."
