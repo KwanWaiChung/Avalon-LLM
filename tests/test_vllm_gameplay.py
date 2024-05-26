@@ -73,7 +73,7 @@ def test_too_many_error():
     )
     agent = VllmAgent(
         max_trials=3,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -81,7 +81,7 @@ def test_too_many_error():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -146,7 +146,7 @@ def test_team_discussion_round1():
         status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
     )
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -154,7 +154,7 @@ def test_team_discussion_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -288,7 +288,7 @@ def test_summarize_round1():
         "id": 1,
     }
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -297,7 +297,7 @@ def test_summarize_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -430,7 +430,7 @@ def test_guess_role_round1():
         status=RequestStatus.ROLE_GUESS_GET_PROMPT,
     )
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -438,7 +438,7 @@ def test_guess_role_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -527,7 +527,7 @@ def test_guess_belief_merlin_round1():
     }
     merlin_id = preset["role_names"].index("Merlin")
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -535,7 +535,7 @@ def test_guess_belief_merlin_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -672,7 +672,7 @@ def test_guess_belief_servant_round1():
     }
     merlin_id = preset["role_names"].index("Merlin")
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -680,7 +680,7 @@ def test_guess_belief_servant_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -782,7 +782,7 @@ def test_guess_belief_minion_round1():
         "id": 1,
     }
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -790,7 +790,7 @@ def test_guess_belief_minion_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -895,7 +895,7 @@ def test_team_proposal_round1():
         "id": 1,
     }
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -903,7 +903,7 @@ def test_team_proposal_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -985,7 +985,7 @@ def test_team_vote_round1():
         "id": 1,
     }
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -993,7 +993,7 @@ def test_team_vote_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -1097,7 +1097,7 @@ def test_quest_vote_round1():
         "id": 1,
     }
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -1105,7 +1105,7 @@ def test_quest_vote_round1():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=True,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,
@@ -1250,7 +1250,7 @@ def test_assassin():
         "id": 1,
     }
     agent = VllmAgent(
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         use_summary=True,
         chat_template=get_conv_template("llama-3"),
     )
@@ -1258,7 +1258,7 @@ def test_assassin():
         agent=agent,
         logger=logger,
         to_discuss=True,
-        add_strategy_in_history=False,
+        add_strategy_in_prompt=False,
         to_guess_role=False,
         to_guess_multiple_player_role=False,
         n_guess_role_repeat=1,

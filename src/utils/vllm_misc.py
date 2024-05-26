@@ -1,4 +1,4 @@
-from avalonbench_dev.avalon.engine import AvalonGameEnvironment
+from src.server.tasks.avalon.engine import AvalonGameEnvironment
 from typing import Dict, Any
 from enum import Enum
 

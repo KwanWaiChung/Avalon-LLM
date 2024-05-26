@@ -23,9 +23,9 @@ import torch
 import numpy as np
 import random
 import os
+import json
 from typing import Tuple, List, Dict
-from colorama import Fore
-from colorama import Style
+from colorama import Fore, Style
 
 
 def get_project_root() -> str:
@@ -88,3 +88,15 @@ def format_messages(messages: List[Dict[str, str]]) -> str:
         elif msg["role"] == "assistant":
             s += f"{Fore.MAGENTA} {Style.BRIGHT} Assistant: {msg['content']} {Style.RESET_ALL}\n"
     return s
+
+
+def _parse_json(resp: str):
+    resp_dict: Dict[str, str] = json.loads(
+        "{"
+        + resp.split("```json")[-1]
+        .split("```")[0]
+        .split("{", 1)[-1]
+        .split("}", 1)[0]
+        + "}"
+    )
+    return resp_dict

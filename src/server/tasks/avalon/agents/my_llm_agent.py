@@ -1,8 +1,9 @@
 from typing import List, Literal, Dict, Any, Union
-from avalonbench_dev.avalon.engine import AvalonBasicConfig
+from src.server.tasks.avalon.engine import AvalonBasicConfig
 from src.server.tasks.avalon.agents.agent import Agent
 from src.server.tasks.avalon.my_prompts import (
     INTRODUCTION,
+    PROPOSE_TEAM_DUPLICATE_PROMPT,
     SUMMARIZE,
     TEAM_DISCUSSION,
     PROPOSE_TEAM_PROMPT,
@@ -23,6 +24,7 @@ from src.utils.inference import (
     AnyscaleInferenceStrategy,
     LocalInferenceStrategy,
 )
+from src.utils.misc import _parse_json
 from transformers import AutoTokenizer
 import json
 import logging
@@ -64,7 +66,7 @@ class MyLLMAgent(MyAgentBase):
         max_tokens: int = 512,
         end_tokens: List[str] = [],
         to_recommend_strategy: bool = False,
-        add_strategy_in_history: bool = False,
+        add_strategy_in_prompt: bool = False,
         use_summary: bool = False,
         tokenizer_path: str = None,
         max_input_length: int = None,
@@ -89,7 +91,7 @@ class MyLLMAgent(MyAgentBase):
             max_tokens (int): The maximum number of tokens for the language model.
             end_tokens (List[str]): The end tokens for the language model.
             to_recommend_strategy (bool): Whether to prompt the recommended strategy.
-            add_strategy_in_history (bool): Add the self-generated strategy in history.
+            add_strategy_in_prompt (bool): Add the self-generated strategy in history.
             tokenizer_path (str): The path of the tokenizer. If provided, it will be used
                 to check whether the input exceed max_input_length.
             max_input_length (int): The maximum input length allowed.
@@ -138,7 +140,7 @@ class MyLLMAgent(MyAgentBase):
         self.max_tokens = max_tokens
         self.end_tokens = end_tokens
         self.to_recommend_strategy = to_recommend_strategy
-        self.add_strategy_in_history = add_strategy_in_history
+        self.add_strategy_in_prompt = add_strategy_in_prompt
         self.use_summary = use_summary
         self.tokenizer = (
             AutoTokenizer.from_pretrained(tokenizer_path)
@@ -184,18 +186,25 @@ class MyLLMAgent(MyAgentBase):
                 f"You know that Players {minion} and {assassin} are Evil, and Players"
                 f" {', '.join(servant_list)} are Servants."
             )
+            strategy = "Guide your team to select good team members during discussion in a subtle way. During team voting, always reject teams with evil team players."
         elif self.role_name == "Minion":
             self.reveal_prompt = (
                 f"You know that Player {assassin} is Assassin, and Players"
                 f" {', '.join(good_team)} are on the good team, but you do not know who is Merlin."
             )
+            strategy = "Include exactly one evil team player in the team. Only approve teams with at least one evil team player."
         elif self.role_name == "Assassin":
             self.reveal_prompt = (
                 f"You know that Player {minion} is Minion, and Players"
                 f" {', '.join(good_team)} are on the good team, but you do not know who is Merlin."
             )
+            strategy = "Include exactly one evil team player in the team. Only approve teams with at least one evil team player."
+        else:
+            strategy = "Choose players exclusively from the good team. Only approve teams composed entirely of players from the good team. Always include yourself in the team and reject those do not."
 
         self.system_info = intro_prompt.strip()
+        if self.add_strategy_in_prompt:
+            self.reveal_prompt += " " + strategy
 
     def vote_on_team(
         self, mission_id: int, team: frozenset[int]
@@ -260,12 +269,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp_dict: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
+                resp_dict: Dict[str, str] = _parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -284,7 +288,6 @@ class MyLLMAgent(MyAgentBase):
                     messages.append({"role": "user", "content": error_msg})
                 else:
                     resp_dict["vote"] = resp_dict["vote"] == "approve"
-
                     break
         else:
             raise OutputException(err_msg)
@@ -347,12 +350,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp_dict: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
+                resp_dict: Dict[str, str] = _parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -430,12 +428,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp_dict: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
+                resp_dict: Dict[str, str] = _parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -630,7 +623,7 @@ class MyLLMAgent(MyAgentBase):
     def _get_prompt_prefix(self, n_rounds_to_skip: int = 0):
         history_str = self.get_history_str(
             self.history,
-            self.id if self.add_strategy_in_history else None,
+            self.id if self.add_strategy_in_prompt else None,
             n_rounds_to_skip=n_rounds_to_skip,
             use_summary=self.use_summary,
             summary_idx=self.id if self.use_summary else None,
@@ -654,7 +647,7 @@ class MyLLMAgent(MyAgentBase):
                 prompt += " You are the Quest leader of this round."
             else:
                 prompt += f" Player {team_leader_id} is the Quest leader of this round."
-            prompt += f" This Quest requires {team_size} players to vote."
+            prompt += f" This Quest requires a team of {team_size} players"
 
             # history.append(f"Leader is Player {self.history['leaders'][i]}")
             if not any(resp for resp in self.history["team_discs"][-1]):
@@ -688,12 +681,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
+                resp: Dict[str, str] = _parse_json(resp)
             except json.JSONDecodeError:
                 LOGGER.debug(
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -768,12 +756,7 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp: str = output["output"]
-                resp_dict: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
+                resp_dict: Dict[str, str] = _parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -785,7 +768,7 @@ class MyLLMAgent(MyAgentBase):
                 messages.append({"role": "user", "content": RETRY_JSON_PROMPT})
             else:
                 if len(resp_dict["team"]) != team_size:
-                    err_msg = f"Team size not matched. We need a team with {team_size} players, but received {resp_dict['team']}."
+                    err_msg = f"Team size not matched. We need a team with {team_size} players, but received {resp_dict['team']}. Trial: {i}/{n_trials}."
                     LOGGER.debug(err_msg)
                     messages.append(
                         {"role": "assistant", "content": output["output"]}
@@ -800,8 +783,24 @@ class MyLLMAgent(MyAgentBase):
                             ),
                         }
                     )
+                elif len(set(resp_dict["team"])) != team_size:
+                    err_msg = f"Duplicate members found on the team. We need a team with {team_size} unique players, but received {resp_dict['team']}."
+                    LOGGER.debug(err_msg)
+                    messages.append(
+                        {"role": "assistant", "content": output["output"]}
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": PROPOSE_TEAM_DUPLICATE_PROMPT.replace(
+                                "{target_num_player}", str(team_size)
+                            ),
+                        }
+                    )
                 elif any(
-                    mem < 0 or mem >= self.config.num_players
+                    not isinstance(mem, int)
+                    or mem < 0
+                    or mem >= self.config.num_players
                     for mem in resp_dict["team"]
                 ):
                     err_msg = f"Proposed team contains invalid player ids: {resp_dict['team']}. Max player id is {self.config.num_players-1}"
@@ -994,12 +993,7 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp: str = output["output"]
-                resp_dict: Dict[str, str] = json.loads(
-                    "{"
-                    + resp.split("```json")[-1]
-                    .split("```")[0]
-                    .split("{", 1)[-1]
-                )
+                resp_dict: Dict[str, str] = _parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."

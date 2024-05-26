@@ -37,6 +37,7 @@ class AnyscaleInferenceStrategy(OpenAIInferenceStrategy):
         temperature: float = 0,
         end_tokens: List[str] = [],
         top_p: float = 1,
+        seed: int = 111,
         max_trial: int = 20,
     ) -> Dict[str, Any]:
         """
@@ -64,6 +65,7 @@ class AnyscaleInferenceStrategy(OpenAIInferenceStrategy):
             end_tokens=end_tokens,
             model_name=model_name,
             top_p=top_p,
+            seed=seed,
             max_trial=max_trial,
             base_url="https://api.endpoints.anyscale.com/v1",
         )

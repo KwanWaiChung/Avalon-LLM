@@ -119,7 +119,7 @@ class RequestProcessor:
         self,
         agent: VllmAgent,
         to_discuss: bool,  # game arguments
-        add_strategy_in_history: bool,
+        add_strategy_in_prompt: bool,
         to_guess_role: bool,
         to_guess_multiple_player_role: bool,
         n_guess_role_repeat: int,
@@ -129,7 +129,7 @@ class RequestProcessor:
     ):
         self.agent = agent
         self.to_discuss = to_discuss
-        self.add_strategy_in_history = add_strategy_in_history
+        self.add_strategy_in_prompt = add_strategy_in_prompt
         self.to_guess_role = to_guess_role
         self.to_guess_multiple_player_role = to_guess_multiple_player_role
         self.n_guess_role_repeat = n_guess_role_repeat
@@ -357,7 +357,6 @@ class RequestProcessor:
             prompt, status = self.agent.team_discussion(req)
             if status == RequestStatus.TEAM_DISCUSSION_SUCCEED:
                 resp = req.resp
-                resp["prompt"] = prompt
                 req.history["team_discs"][n_round - 1][player_id] = resp
                 if len(req.history["team_discs"][n_round - 1]) == 5:
                     for i in range(5):
@@ -484,6 +483,7 @@ class RequestProcessor:
                         {
                             "prompt": prompt,
                             "output": resp,
+                            "init_resp": req.buffer["init_resp"],
                             "src_player": req.player_idx,
                             "tgt_player": req.buffer["tgt_player_i"],
                             "tgt_role": req.buffer["tgt_role"],
@@ -625,6 +625,7 @@ class RequestProcessor:
                 req.history["role_belief"][n_round - 1][req.player_idx] = {
                     "prompt": prompt,
                     "output": resp,
+                    "init_resp": req.buffer["init_resp"],
                     "src_player": req.player_idx,
                     "tgt_player": req.buffer["tgt_player_i"],
                     "tgt_role": req.buffer["tgt_role"],
@@ -694,6 +695,7 @@ class RequestProcessor:
                 req.history["summaries"][n_round - 1][req.player_idx] = {
                     "prompt": prompt,
                     "resp": resp,
+                    "init_resp": req.buffer["init_resp"],
                 }
                 # need to wait all finish summarizing.
                 if len(req.history["summaries"][n_round - 1]) == 5:
@@ -745,7 +747,6 @@ class RequestProcessor:
                     self.logger.info(
                         f"Game number: {req.game_idx}. Round: {req.env.turn+1}. Team selection phase, the leader, Player {leader}, selected the team {resp['team']}."
                     )
-                resp["prompt"] = prompt
                 req.history["team_props"].append(resp)
                 req.env.choose_quest_team(
                     team=frozenset(resp["team"]), leader=leader
@@ -800,7 +801,6 @@ class RequestProcessor:
                 # `vote` (bool): The outcome of the vote
                 #     (True for "approve", False for "reject").
                 resp: Dict[str, str] = req.resp
-                resp["prompt"] = prompt
                 req.history["team_votes"][-1]["votes"][req.player_idx] = resp
                 # need to wait all five
                 if not len(req.history["team_votes"][-1]["votes"]) == 5:
@@ -890,7 +890,6 @@ class RequestProcessor:
                 # `vote` (bool): The outcome of the vote
                 #     (True for "approve", False for "reject").
                 resp: Dict[str, str] = req.resp
-                resp["prompt"] = prompt
                 req.history["quest_votes"][-1]["votes"][req.player_idx] = resp
                 # need to wait all votes
                 if not len(req.history["quest_votes"][-1]["votes"]) == len(
@@ -976,7 +975,6 @@ class RequestProcessor:
             prompt, status = self.agent.assassinate(req)
             if status == RequestStatus.ASSASSIN_VOTE_SUCCEED:
                 resp: Dict[str, str] = req.resp
-                resp["prompt"] = prompt
                 # (next phase, game is done, good wins?)
                 assassin = resp["merlin"]
                 result = req.env.choose_assassination_target(
@@ -1025,7 +1023,7 @@ def main(
     top_p=1,
     to_exchange_role_per_setting: bool = True,
     to_discuss=True,
-    add_strategy_in_history=False,
+    add_strategy_in_prompt=False,
     to_guess_role: bool = False,
     to_guess_multiple_player_role: bool = False,
     to_guess_belief: bool = False,
@@ -1046,7 +1044,7 @@ def main(
         to_exchange_role_per_setting: If True, we arrange two games per setting
              where the two models played against different teams.
         to_discuss (bool, optional): _description_. Defaults to True.
-        add_strategy_in_history (bool, optional): _description_. Defaults to False.
+        add_strategy_in_prompt (bool, optional): _description_. Defaults to False.
         to_guess_role (bool, optional): _description_. Defaults to False.
         to_guess_multiple_player_role (bool, optional): _description_. Defaults to False.
         to_guess_belief (bool, optional): _description_. Defaults to False.
@@ -1122,14 +1120,14 @@ def main(
         )
 
     agent = VllmAgent(
-        add_strategy_in_history=add_strategy_in_history,
+        add_strategy_in_prompt=add_strategy_in_prompt,
         use_summary=use_summary,
         chat_template=get_conv_template("llama-3"),
     )
     req_processor = RequestProcessor(
         agent=agent,
         to_discuss=to_discuss,
-        add_strategy_in_history=add_strategy_in_history,
+        add_strategy_in_prompt=add_strategy_in_prompt,
         to_guess_role=to_guess_role,
         to_guess_multiple_player_role=to_guess_multiple_player_role,
         n_guess_role_repeat=1,
@@ -1157,6 +1155,7 @@ def main(
             ],
             "input_tokens": 0,
             "output_tokens": 0,
+            "n_error": 0,
             "preset": preset,
             "id": game_i,
         }

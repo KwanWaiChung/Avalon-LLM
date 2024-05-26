@@ -1,7 +1,7 @@
 import json
 import random
 import os
-from avalonbench_dev.avalon.engine import (
+from src.server.tasks.avalon.engine import (
     AvalonBasicConfig,
     AvalonGameEnvironment,
 )
@@ -27,7 +27,7 @@ def main(
     tokenizer_path: str = None,
     max_input_length: int = None,
     to_discuss=True,
-    add_strategy_in_history=False,
+    add_strategy_in_prompt=False,
     to_guess_role: bool = False,
     to_guess_multiple_player_role: bool = True,
     n_guess_role_repeat: int = 1,
@@ -50,7 +50,7 @@ def main(
             to check whether the input exceed max_input_length.
         max_input_length (int): The maximum input length allowed.
         to_discuss (bool, optional): _description_. Defaults to True.
-        add_strategy_in_history (bool, optional): _description_. Defaults to False.
+        add_strategy_in_prompt (bool, optional): _description_. Defaults to False.
         to_guess_role (bool): Guess other's role after discussion.
         to_guess_multiple_player_role (bool): Guess multiple player's role simultaneously.
         n_guess_role_repeat (int): Number of samples to generate.
@@ -142,7 +142,7 @@ def main(
                             role=role_i,
                             end_tokens=end_tokens,
                             temperature=temperature,
-                            add_strategy_in_history=add_strategy_in_history,
+                            add_strategy_in_prompt=add_strategy_in_prompt,
                             use_summary=use_summary,
                             tokenizer_path=tokenizer_path,
                             max_input_length=max_input_length,
