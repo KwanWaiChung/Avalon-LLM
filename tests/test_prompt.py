@@ -1,4 +1,4 @@
-from src.server.tasks.avalon.agents.my_llm_agent import MyLLMAgent
+from src.utils.misc import format_history
 
 
 def test_llmagent_history():
@@ -22,9 +22,7 @@ def test_llmagent_history():
         "output_tokens": 0,
     }
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=0
-        )
+        format_history(history=history, use_summary=True, summary_idx=0)
         == """### Game Play History
 
 #### Round 1 Discussion
@@ -39,9 +37,7 @@ Player 0: Player 0 response at round 1."""
         }
     )
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=0
-        )
+        format_history(history=history, use_summary=True, summary_idx=0)
         == """### Game Play History
 
 #### Round 1 Discussion
@@ -52,9 +48,7 @@ Player 1: Player 1 response at round 1."""
     # team props
     history["team_props"].append({"team": [0, 1]})
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=0
-        )
+        format_history(history=history, use_summary=True, summary_idx=0)
         == """### Game Play History
 
 #### Round 1 Discussion
@@ -70,9 +64,7 @@ The leader, Player 0, proposed Player 0, and Player 1."""
         {"votes": [{"vote": True}, {"vote": True}], "result": True}
     )
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=0
-        )
+        format_history(history=history, use_summary=True, summary_idx=0)
         == """### Game Play History
 
 #### Round 1 Discussion
@@ -92,9 +84,7 @@ Team result: The proposed team is approved."""
         {"votes": [{"vote": True}, {"vote": True}], "result": True}
     )
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=0
-        )
+        format_history(history=history, use_summary=True, summary_idx=0)
         == """### Game Play History
 
 #### Round 1 Discussion
@@ -121,9 +111,7 @@ Quest result: The mission succeeded."""
         ]
     )
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=0
-        )
+        format_history(history=history, use_summary=True, summary_idx=0)
         == """### Game Play History
 
 #### Previous Game Play Summary
@@ -166,9 +154,7 @@ Quest result: The mission succeeded."""
         {"votes": [{"vote": False}, {"vote": True}], "result": False}
     )
     assert (
-        MyLLMAgent.get_history_str(
-            history=history, use_summary=True, summary_idx=1
-        )
+        format_history(history=history, use_summary=True, summary_idx=1)
         == """### Game Play History
 
 #### Previous Game Play Summary

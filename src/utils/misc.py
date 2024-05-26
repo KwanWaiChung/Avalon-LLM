@@ -24,8 +24,37 @@ import numpy as np
 import random
 import os
 import json
-from typing import Tuple, List, Dict
+from typing import Any, Tuple, List, Dict
 from colorama import Fore, Style
+from src.server.tasks.avalon.my_prompts import (
+    ASSASSIN_STRATEGY,
+    INTRODUCTION,
+    MERLIN_REVEAL_PROMPT,
+    EVIL_REVEAL_PROMPT,
+    MERLIN_STRATEGY,
+    MINION_STRATEGY,
+    MORGANA_STRATEGY,
+    PERCIVAL_REVEAL_PROMPT,
+    PERCIVAL_STRATEGY,
+    SERVANT_STRATEGY,
+    SIX_PLAYERS_SETTING,
+    SUMMARIZE,
+    TEAM_DISCUSSION,
+    PROPOSE_TEAM_PROMPT,
+    RETRY_JSON_PROMPT,
+    PROPOSE_TEAM_INVALID_SIZE_PROMPT,
+    PROPOSE_TEAM_INVALID_PLAYER_PROMPT,
+    PROPOSE_TEAM_DUPLICATE_PROMPT,
+    VOTE_MISSION_ACTION,
+    TEAM_VOTE,
+    ASSASSINATION_PROMPT,
+    GUESS_GOOD_ROLE_PROMPT,
+    GUESS_ALL_ROLE_PROMPT,
+    GUESS_OTHERS_BELIEF_PRMOPT,
+    GUESS_ONE_ROLE_PROMPT,
+)
+
+seeder = random.Random(233)
 
 
 def get_project_root() -> str:
@@ -90,7 +119,7 @@ def format_messages(messages: List[Dict[str, str]]) -> str:
     return s
 
 
-def _parse_json(resp: str):
+def parse_json(resp: str):
     resp_dict: Dict[str, str] = json.loads(
         "{"
         + resp.split("```json")[-1]
@@ -100,3 +129,254 @@ def _parse_json(resp: str):
         + "}"
     )
     return resp_dict
+
+
+def get_player_str(player_list: List[int]) -> str:
+    if len(player_list) == 2:
+        player_str = " and ".join(
+            [f"Player {player}" for player in player_list]
+        )
+    else:
+        player_str = ", ".join([f"Player {player}" for player in player_list])
+        player_str = (
+            player_str.rsplit(", ", 1)[0]
+            + ", and "
+            + player_str.rsplit(", ", 1)[-1]
+        )
+    return player_str
+
+
+def get_game_info_prompt(
+    player_list, player_id, add_strategy_in_prompt=False
+) -> None:
+    """Initiliaze the game info for the agent, which includes game introduction, role, and reveal information for different roles."""
+    # Introduction Prompt
+    verbal_side = ["Evil", "Good"]
+    num_players = len(player_list)
+    players_settings = {6: SIX_PLAYERS_SETTING}
+
+    intro_prompt = INTRODUCTION.replace(
+        "{player settings}", players_settings[num_players]
+    )
+    intro_prompt += "\n"
+
+    assassin = None
+    merlin = None
+    minion = None
+    servant = None
+    percival = None
+    morgana = None
+
+    evil_players_info_for_minion = ""
+    evil_players_info_for_assassin = ""
+    evil_players_info_for_morgana = ""
+    name = f"Player {player_id}"
+    role_name = player_list[player_id][1]
+    good_team: List[int] = []
+    evil_team: List[int] = []
+    for idx, player_info in enumerate(player_list):
+        if player_info[1] == "Minion":
+            minion = str(idx)
+            evil_team.append(idx)
+            evil_players_info_for_assassin += f"Player {idx} is Minion"
+            evil_players_info_for_morgana += f"Player {idx} is Minion"
+        elif player_info[1] == "Servant":
+            good_team.append(idx)
+        elif player_info[1] == "Merlin":
+            merlin = idx
+        elif player_info[1] == "Assassin":
+            evil_team.append(idx)
+            evil_players_info_for_minion += f"Player {idx} is Assassin"
+            evil_players_info_for_morgana += f"Player {idx} is Assassin"
+        elif player_info[1] == "Morgana":
+            morgana = idx
+            evil_team.append(idx)
+            evil_players_info_for_minion += f"Player {idx} is Morgana"
+            evil_players_info_for_assassin += f"Player {idx} is Morgana"
+        elif player_info[1] == "Percival":
+            percival = idx
+            good_team.append(idx)
+        else:
+            raise ValueError(f"Unrecognized role: {player_info[1]}")
+
+    identity_prompt = f"You are {name}, with identity {role_name}."
+
+    reveal_prompt = ""
+    if role_name == "Merlin":
+        evil_team_str = get_player_str(evil_team)
+        good_team_str = get_player_str(good_team)
+        reveal_prompt = MERLIN_REVEAL_PROMPT.replace(
+            "{evil_players}", evil_team_str
+        ).replace("{good_players}", good_team_str)
+        strategy = MERLIN_STRATEGY
+    elif role_name == "Minion":
+        good_team_str = get_player_str(good_team + [merlin])
+        reveal_prompt = EVIL_REVEAL_PROMPT.replace(
+            "{evil_players_info}", evil_players_info_for_minion
+        ).replace("{good_players}", good_team_str)
+        strategy = MINION_STRATEGY
+    elif role_name == "Assassin":
+        good_team_str = get_player_str(good_team + [merlin])
+        reveal_prompt = EVIL_REVEAL_PROMPT.replace(
+            "{evil_players_info}", evil_players_info_for_assassin
+        ).replace("{good_players}", good_team_str)
+        strategy = ASSASSIN_STRATEGY
+    elif role_name == "Morgana":
+        good_team_str = get_player_str(good_team + [merlin])
+        reveal_prompt = EVIL_REVEAL_PROMPT.replace(
+            "{evil_players_info}", evil_players_info_for_morgana
+        ).replace("{good_players}", good_team_str)
+        strategy = MORGANA_STRATEGY
+    elif role_name == "Percival":
+        players = [morgana, merlin]
+        seeder.shuffle(players)
+        players_str = get_player_str(players)
+        reveal_prompt = PERCIVAL_REVEAL_PROMPT.replace(
+            "{players}", players_str
+        )
+        strategy = PERCIVAL_STRATEGY
+    elif role_name == "Servant":
+        strategy = SERVANT_STRATEGY
+    else:
+        raise ValueError(f"Unrecognized role name: {role_name}.")
+
+    system_info = intro_prompt.strip()
+    if add_strategy_in_prompt:
+        reveal_prompt += " " + strategy
+    return system_info, identity_prompt, reveal_prompt.strip()
+
+
+def format_history(
+    history: Dict[str, Any],
+    strategy_idx: int = None,
+    n_rounds_to_skip: int = 0,
+    summary_idx: int = None,
+    use_summary: bool = False,
+) -> str:
+    output = ["### Game Play History"]
+    n_round = len(history["leaders"])
+    start_round = 0
+
+    if (
+        use_summary
+        and history["summaries"]
+        and summary_idx in history["summaries"][0]
+    ):
+        # This last condition is just  to ensure we have at least
+        # one summary. We either use the summary in the last round
+        # if it exists, or second last round when summarizing, because
+        # an empty place holder is inserted.
+        # history['summaries'][0][0] = {'prompt': ..., 'resp': ...}
+        if summary_idx in history["summaries"][-1]:
+            start_round = len(history["summaries"]) - 1
+        else:
+            assert summary_idx in history["summaries"][-2]
+            start_round = len(history["summaries"]) - 2
+        output.append("\n#### Previous Game Play Summary")
+        output.append(history["summaries"][start_round][summary_idx]["resp"])
+
+    for i in range(start_round, n_round):
+        if i < n_rounds_to_skip:
+            continue
+        # history.append(f"Leader is Player {history['leaders'][i]}")
+        include_cur_round_diss = (
+            use_summary
+            and (
+                i >= len(history["summaries"])
+                or summary_idx not in history["summaries"][i]
+            )
+        ) or not use_summary
+        if include_cur_round_diss and any(
+            resp for resp in history["team_discs"][i].values()
+        ):
+            output.append(f"\n#### Round {i + 1} Discussion")
+            if (
+                strategy_idx is not None
+                and strategy_idx in history["team_discs"][i]
+            ):
+                output.append(
+                    f"**Strategy:** {history['team_discs'][i][strategy_idx]['strategy']}"
+                )
+            for p_i, resp in enumerate(history["team_discs"][i].values()):
+                if resp:
+                    output.append(f"Player {p_i}: {resp['response']}")
+
+        if i < len(history["team_props"]):
+            output.append(f"\n#### Round {i+1} Proposed Team")
+            if (
+                strategy_idx is not None
+                and history["leaders"][i] == strategy_idx
+            ):
+                output.append(
+                    f"**Strategy:** {history['team_props'][i]['rationale']}"
+                )
+            players = []
+            for player in history["team_props"][i]["team"]:
+                players.append(f"Player {player}")
+            output.append(
+                f"The leader, Player {history['leaders'][i]}, proposed "
+                + ", ".join(players[:-1])
+                + ", and "
+                + players[-1]
+                + "."
+            )
+
+        if i < len(history["team_votes"]):
+            output.append(f"\n#### Round {i+1} Team Votes")
+            if strategy_idx is not None:
+                output.append(
+                    f"**Strategy:** {history['team_votes'][i]['votes'][strategy_idx]['rationale']}"
+                )
+                output.append(
+                    f"**Your Vote:** {'Approve' if history['team_votes'][i]['votes'][strategy_idx]['vote'] else 'reject'}."
+                )
+            num_approves = sum(
+                vote["vote"]
+                for vote in history["team_votes"][i]["votes"].values()
+            )
+
+            output.append(
+                f"{num_approves} player(s)"
+                " approved,"
+                f" {len(history['team_votes'][i]['votes']) - num_approves} player(s)"
+                " rejected."
+            )
+            output.append(
+                "Team result: The proposed team is"
+                f" {'approved' if history['team_votes'][i]['result'] else 'rejected'}."
+            )
+
+        if (
+            i < len(history["team_votes"])
+            and history["team_votes"][i]["result"]
+            and i < len(history["quest_votes"])
+            and history["quest_votes"][i]
+        ):
+            output.append(f"\n#### Round {i+1} Quest Votes")
+            if (
+                strategy_idx is not None
+                and strategy_idx in history["team_props"][i]["team"]
+            ):
+                _idx = history["team_props"][i]["team"].index(strategy_idx)
+                output.append(
+                    f"**Strategy:** {history['quest_votes'][i]['votes'][_idx]['rationale']}"
+                )
+
+            num_approves = sum(
+                vote["vote"]
+                for vote in history["quest_votes"][i]["votes"].values()
+            )
+            output.append(
+                f"{num_approves} player(s)"
+                " passed,"
+                f" {len(history['quest_votes'][i]['votes']) - num_approves} player(s)"
+                " failed."
+            )
+            output.append(
+                "Quest result: The mission"
+                f" {'succeeded' if history['quest_votes'][i]['result'] else 'failed'}."
+            )
+    history_str = "\n".join(output)
+    if len(output) == 1:
+        history_str += "\nNone."
+    return history_str.strip()

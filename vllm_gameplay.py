@@ -3,7 +3,11 @@ import random
 import os
 import pickle
 import torch
-from src.server.tasks.avalon.engine import AvalonGameEnvironment
+import numpy as np
+from src.server.tasks.avalon.engine import (
+    AvalonGameEnvironment,
+    AvalonBasicConfig,
+)
 from src.utils.vllm_misc import Request, RequestStatus
 from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
 from src.utils.inference import (
@@ -138,18 +142,22 @@ class RequestProcessor:
         self.logger = logger
         self.n_finished_games = 0
 
+    def _get_num_players(self, req) -> int:
+        return len(req.env.get_roles())
+
     def finish_game(self, req):
         if not req.env.done:
             raise ValueError("Game not yet done")
 
         n_rounds = len(req.history["leaders"])
+        n_player = self._get_num_players(req)
         # team discs check
         if self.to_discuss:
             assert len(req.history["team_discs"]) == n_rounds
             for team_disc in req.history["team_discs"]:
                 assert (
-                    len(team_disc) == 5
-                ), f"Should have 5 players discussed in game {req.game_idx}."
+                    len(team_disc) == n_player
+                ), f"Should have {n_player} players discussed in game {req.game_idx}."
                 for player in team_disc.values():
                     for k in ["strategy", "response", "prompt"]:
                         assert (
@@ -167,8 +175,8 @@ class RequestProcessor:
         # team_votes check
         for team_vote in req.history["team_votes"]:
             assert (
-                len(team_vote["votes"]) == 5
-            ), f"Should have 5 votes but received only {len(team_vote['votes'])} votes in game {req.game_idx}."
+                len(team_vote["votes"]) == n_player
+            ), f"Should have {n_player} votes but received only {len(team_vote['votes'])} votes in game {req.game_idx}."
 
         # quest vote check
         success_teams = sum([v["result"] for v in req.history["team_votes"]])
@@ -184,8 +192,8 @@ class RequestProcessor:
             ), f"Should have same number of summaries as number of rounds in game {req.game_idx}."
             for summary in req.history["summaries"]:
                 assert (
-                    len(summary) == 5
-                ), "Should have 5 summaries at each round."
+                    len(summary) == n_player
+                ), f"Should have {n_player} summaries at each round."
                 for p_summary in summary.values():
                     for k in ["prompt", "resp"]:
                         assert (
@@ -199,8 +207,8 @@ class RequestProcessor:
             ), "Each round should have role guess."
             for guess in req.history["role_guess"]:
                 assert (
-                    len(guess) == 4
-                ), f"Should have 4 guess at each round since Merlin is not included but received {len(guess)} guesses in game {req.game_idx}."
+                    len(guess) == n_player - 1
+                ), f"Should have {n_player-1} guess at each round since Merlin is not included but received {len(guess)} guesses in game {req.game_idx}."
                 for p_guesses in guess.values():
                     for p_guess in p_guesses:
                         for k in [
@@ -220,8 +228,8 @@ class RequestProcessor:
             ), "Each round should have belief guess."
             for guess in req.history["role_belief"]:
                 assert (
-                    len(guess) == 5
-                ), f"Should have 5 belief guess at each round but received {len(guess)} guesses in game {req.game_idx}."
+                    len(guess) == n_player
+                ), f"Should have {n_player} belief guess at each round but received {len(guess)} guesses in game {req.game_idx}."
                 for p_guess in guess.values():
                     for k in [
                         "output",
@@ -318,6 +326,7 @@ class RequestProcessor:
         phase: int = req.env.get_phase()[0]
         self.phase_check(req.status, phase)
         n_round = len(req.history["leaders"])
+        n_player = self._get_num_players(req)
 
         if req.status in [
             RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
@@ -332,7 +341,7 @@ class RequestProcessor:
                     self.logger.debug(
                         f"`to_discuss` is not specified, routing request to `guess_role`. {req}"
                     )
-                for i in range(5):
+                for i in range(n_player):
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -358,8 +367,8 @@ class RequestProcessor:
             if status == RequestStatus.TEAM_DISCUSSION_SUCCEED:
                 resp = req.resp
                 req.history["team_discs"][n_round - 1][player_id] = resp
-                if len(req.history["team_discs"][n_round - 1]) == 5:
-                    for i in range(5):
+                if len(req.history["team_discs"][n_round - 1]) == n_player:
+                    for i in range(n_player):
                         self.process_req(
                             req=Request(
                                 prompt=None,
@@ -555,7 +564,18 @@ class RequestProcessor:
             if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
                 role = req.env.get_role(req.player_idx)[1]
                 tgt_role: str = req.env.get_role(req.buffer["tgt_player_i"])[1]
-                if role == "Merlin":
+                good_roles: List[str] = [
+                    role[1] for role in req.env.get_roles() if role[2]
+                ]
+                bad_roles: List[str] = [
+                    role[1] for role in req.env.get_roles() if not role[2]
+                ]
+                if tgt_role == "Merlin":
+                    if self.logger:
+                        self.logger.info(
+                            "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
+                        )
+                elif role in good_roles:
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -571,37 +591,11 @@ class RequestProcessor:
                         ),
                         req_queue=req_queue,
                     )
-                elif role == "Servant":
-                    if tgt_role == "Merlin":
+                else:  # evil team
+                    if tgt_role in bad_roles:
                         if self.logger:
                             self.logger.info(
-                                "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
-                            )
-                    else:
-                        self.process_req(
-                            req=Request(
-                                prompt=None,
-                                resp=None,
-                                game_idx=req.game_idx,
-                                player_idx=req.buffer["tgt_player_i"],
-                                history=req.history,
-                                env=req.env,
-                                to_forward=False,
-                                status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                                args={"tgt_player_i": req.player_idx},
-                                prev=req,
-                            ),
-                            req_queue=req_queue,
-                        )
-                else:
-                    if tgt_role in [
-                        "Minion",
-                        "Assassin",
-                        "Merlin",
-                    ]:
-                        if self.logger:
-                            self.logger.info(
-                                f"Since {req.buffer['tgt_role']} knows the role of all players, we did not add extra role guessing prompt."
+                                f"Since {tgt_role} knows the role of all players, we did not add extra role guessing prompt."
                             )
                     else:
                         self.process_req(
@@ -698,7 +692,7 @@ class RequestProcessor:
                     "init_resp": req.buffer["init_resp"],
                 }
                 # need to wait all finish summarizing.
-                if len(req.history["summaries"][n_round - 1]) == 5:
+                if len(req.history["summaries"][n_round - 1]) == n_player:
                     leader: int = req.history["leaders"][-1]
                     self.process_req(
                         req=Request(
@@ -751,7 +745,7 @@ class RequestProcessor:
                 req.env.choose_quest_team(
                     team=frozenset(resp["team"]), leader=leader
                 )
-                for i in range(5):
+                for i in range(n_player):
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -803,7 +797,7 @@ class RequestProcessor:
                 resp: Dict[str, str] = req.resp
                 req.history["team_votes"][-1]["votes"][req.player_idx] = resp
                 # need to wait all five
-                if not len(req.history["team_votes"][-1]["votes"]) == 5:
+                if not len(req.history["team_votes"][-1]["votes"]) == n_player:
                     return
                 votes = [
                     vote["vote"]
@@ -819,7 +813,7 @@ class RequestProcessor:
 
                 phase: int = req.env.get_phase()[0]
                 if phase == 2:
-                    for i in range(5):
+                    for i in range(n_player):
                         self.process_req(
                             req=Request(
                                 prompt=None,
@@ -1056,14 +1050,6 @@ def main(
     """
     seeder = random.Random(seed)
 
-    presets = json.load(open("data/avalon/dev.json"))
-    # debug
-    # preset = {
-    #     "num_players": 5,
-    #     "quest_leader": 0,
-    #     # "role_names": ["Assassin", "Merlin", "Servant", "Servant", "Minion"],
-    #     "role_names": ["Merlin", "Assassin", "Servant", "Servant", "Minion"],
-    # }
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_name = os.path.split(output_path)[-1].rsplit(".", 1)[0] + ".txt"
     logger = get_logger(
@@ -1136,9 +1122,9 @@ def main(
         logger=logger,
     )
     histories = []
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
     for game_i in range(1, n_games + 1):
-        preset = seeder.choice(presets)
-        env = AvalonGameEnvironment.from_presets(preset)
+        env = AvalonGameEnvironment(config, seed=seed + game_i)
         history = {
             "leaders": [env.get_quest_leader()],
             "team_discs": [],
@@ -1156,7 +1142,6 @@ def main(
             "input_tokens": 0,
             "output_tokens": 0,
             "n_error": 0,
-            "preset": preset,
             "id": game_i,
         }
         if model_names is not None:
@@ -1181,7 +1166,7 @@ def main(
 
             # game 2
             if to_exchange_role_per_setting:
-                env = AvalonGameEnvironment.from_presets(preset)
+                env = deepcopy(env)
                 new_history = deepcopy(history)
                 new_history["models"] = [
                     model_names[1][0] if role[-1] else model_names[0][0]

@@ -3,7 +3,10 @@ import os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from typing import List, Dict
-from avalonbench_dev.avalon.engine import AvalonGameEnvironment
+from src.server.tasks.avalon.engine import (
+    AvalonGameEnvironment,
+    AvalonBasicConfig,
+)
 from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
 from vllm_gameplay import RequestProcessor
 from src.utils.vllm_misc import Request, RequestStatus
@@ -13,34 +16,22 @@ from src.server.tasks.avalon.my_prompts import SUMMARIZE
 from copy import deepcopy
 import json
 
+logger = get_logger(logger_level="debug", console_level="info")
+
 
 def test_too_many_error():
-    preset = json.load(open("data/avalon/dev.json"))[0]
-    env = AvalonGameEnvironment.from_presets(preset)
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    env = AvalonGameEnvironment(config)
+    n_players = len(env.get_roles())
     history = {
         "leaders": [0],
         "team_discs": [
             {
-                0: {
-                    "strategy": "Player 0 strategy at round 1.",
-                    "response": "Player 0 response at round 1.",
-                },
-                1: {
-                    "strategy": "Player 1 strategy at round 1.",
-                    "response": "Player 1 response at round 1.",
-                },
-                2: {
-                    "strategy": "Player 2 strategy at round 1.",
-                    "response": "Player 2 response at round 1.",
-                },
-                3: {
-                    "strategy": "Player 3 strategy at round 1.",
-                    "response": "Player 3 response at round 1.",
-                },
-                4: {
-                    "strategy": "Player 4 strategy at round 1.",
-                    "response": "Player 4 response at round 1.",
-                },
+                i: {
+                    "strategy": f"player {i}'s strategy at round 1.",
+                    "response": f"player {i}'s response at round 1.",
+                }
+                for i in range(n_players)
             }
         ],
         "team_props": [],
@@ -56,6 +47,7 @@ def test_too_many_error():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     env.phase = 1
@@ -113,11 +105,20 @@ def test_too_many_error():
 
 
 def test_team_discussion_round1():
-    preset = json.load(open("data/avalon/dev.json"))[0]
-    env = AvalonGameEnvironment.from_presets(preset)
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    env = AvalonGameEnvironment(config)
+    n_players = len(env.get_roles())
     history = {
         "leaders": [0],
-        "team_discs": [],
+        "team_discs": [
+            {
+                i: {
+                    "strategy": f"player {i}'s strategy at round 1.",
+                    "response": f"player {i}'s response at round 1.",
+                }
+                for i in range(n_players)
+            }
+        ],
         "team_props": [],
         "team_votes": [],
         "quest_votes": [],
@@ -131,6 +132,7 @@ def test_team_discussion_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     # (prompt, resp, game idx, history, env, status, buffer)
@@ -189,8 +191,9 @@ def test_team_discussion_round1():
     assert new_req.history == req.history
 
     # give valid resopnse
+    n_players = len(env.get_roles())
     discuss_prompt = "#### Round 1 Discussion"
-    for i in range(5):
+    for i in range(n_players):
         resp = {
             "strategy": f"player {i}'s strategy",
             "response": f"player {i}'s response",
@@ -204,11 +207,11 @@ def test_team_discussion_round1():
             req_queue,
         )
 
-        if i == 4:
-            # 4 role guess, without merlin. Merlin's role guess forward to
+        if i == n_players - 1:
+            # n_players-1 role guess, without merlin. Merlin's role guess forward to
             # belief guess (+1), and an additional role guess for the
             # reference answer for the belief guess.
-            assert len(req_queue) == 6
+            assert len(req_queue) == (n_players - 1) + 2
             src_player_ids = []
             for new_req in req_queue:
                 if new_req.status == RequestStatus.ROLE_GUESS_CHECK_ERROR:
@@ -216,9 +219,14 @@ def test_team_discussion_round1():
                 elif new_req.status == RequestStatus.ROLE_BELIEF_CHECK_ERROR:
                     rb_src_player_id = new_req.player_idx
                     rb_tgt_player_id = new_req.buffer["tgt_player_i"]
-            merlin_id = preset["role_names"].index("Merlin")
+            merlin_id = [
+                i
+                for i, role in enumerate(env.get_roles())
+                if role[1] == "Merlin"
+            ][0]
             assert sorted(src_player_ids) == sorted(
-                [i for i in range(5) if i != merlin_id] + [rb_tgt_player_id]
+                [i for i in range(n_players) if i != merlin_id]
+                + [rb_tgt_player_id]
             )
             assert rb_src_player_id == merlin_id
 
@@ -246,30 +254,16 @@ Player 4: player 4's response"""
 def test_summarize_round1():
     preset = json.load(open("data/avalon/dev.json"))[0]
     env = AvalonGameEnvironment.from_presets(preset)
+    n_players = len(env.get_roles())
     history = {
         "leaders": [0],
         "team_discs": [
             {
-                0: {
-                    "strategy": "Player 0 strategy at round 1.",
-                    "response": "Player 0 response at round 1.",
-                },
-                1: {
-                    "strategy": "Player 1 strategy at round 1.",
-                    "response": "Player 1 response at round 1.",
-                },
-                2: {
-                    "strategy": "Player 2 strategy at round 1.",
-                    "response": "Player 2 response at round 1.",
-                },
-                3: {
-                    "strategy": "Player 3 strategy at round 1.",
-                    "response": "Player 3 response at round 1.",
-                },
-                4: {
-                    "strategy": "Player 4 strategy at round 1.",
-                    "response": "Player 4 response at round 1.",
-                },
+                i: {
+                    "strategy": f"player {i}'s strategy at round 1.",
+                    "response": f"player {i}'s response at round 1.",
+                }
+                for i in range(n_players)
             }
         ],
         "team_props": [],
@@ -285,6 +279,7 @@ def test_summarize_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     agent = VllmAgent(
@@ -377,32 +372,18 @@ Player 4: Player 4 response at round 1."""
 
 
 def test_guess_role_round1():
-    preset = json.load(open("data/avalon/dev.json"))[0]
-    env = AvalonGameEnvironment.from_presets(preset)
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    env = AvalonGameEnvironment(config)
+    n_players = len(env.get_roles())
     history = {
         "leaders": [0],
         "team_discs": [
             {
-                0: {
-                    "strategy": "Player 0 strategy at round 1.",
-                    "response": "Player 0 response at round 1.",
-                },
-                1: {
-                    "strategy": "Player 1 strategy at round 1.",
-                    "response": "Player 1 response at round 1.",
-                },
-                2: {
-                    "strategy": "Player 2 strategy at round 1.",
-                    "response": "Player 2 response at round 1.",
-                },
-                3: {
-                    "strategy": "Player 3 strategy at round 1.",
-                    "response": "Player 3 response at round 1.",
-                },
-                4: {
-                    "strategy": "Player 4 strategy at round 1.",
-                    "response": "Player 4 response at round 1.",
-                },
+                i: {
+                    "strategy": f"player {i}'s strategy at round 1.",
+                    "response": f"player {i}'s response at round 1.",
+                }
+                for i in range(n_players)
             }
         ],
         "team_props": [],
@@ -418,6 +399,7 @@ def test_guess_role_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     req = Request(
@@ -480,34 +462,22 @@ def test_guess_role_round1():
 
 
 def test_guess_belief_merlin_round1():
-    preset = json.load(open("data/avalon/dev.json"))[0]
-    env = AvalonGameEnvironment.from_presets(preset)
-    merlin_id = preset["role_names"].index("Merlin")
-    non_merlin_id = [i for i in range(5) if i != merlin_id]
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    env = AvalonGameEnvironment(config)
+    n_players = len(env.get_roles())
+    merlin_id = [
+        i for i, role in enumerate(env.get_roles()) if role[1] == "Merlin"
+    ][0]
+    non_merlin_id = [i for i in range(n_players) if i != merlin_id]
     history = {
         "leaders": [0],
         "team_discs": [
             {
-                0: {
-                    "strategy": "Player 0 strategy at round 1.",
-                    "response": "Player 0 response at round 1.",
-                },
-                1: {
-                    "strategy": "Player 1 strategy at round 1.",
-                    "response": "Player 1 response at round 1.",
-                },
-                2: {
-                    "strategy": "Player 2 strategy at round 1.",
-                    "response": "Player 2 response at round 1.",
-                },
-                3: {
-                    "strategy": "Player 3 strategy at round 1.",
-                    "response": "Player 3 response at round 1.",
-                },
-                4: {
-                    "strategy": "Player 4 strategy at round 1.",
-                    "response": "Player 4 response at round 1.",
-                },
+                i: {
+                    "strategy": f"player {i}'s strategy at round 1.",
+                    "response": f"player {i}'s response at round 1.",
+                }
+                for i in range(n_players)
             }
         ],
         "team_props": [],
@@ -523,9 +493,9 @@ def test_guess_belief_merlin_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
-    merlin_id = preset["role_names"].index("Merlin")
     agent = VllmAgent(
         add_strategy_in_prompt=False,
         use_summary=True,
@@ -627,32 +597,20 @@ def test_guess_belief_merlin_round1():
 
 
 def test_guess_belief_servant_round1():
-    preset = json.load(open("data/avalon/dev.json"))[0]
-    env = AvalonGameEnvironment.from_presets(preset)
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    env = AvalonGameEnvironment(config)
+    n_players = len(env.get_roles())
     history = {
         "leaders": [0],
         "team_discs": [
             {
-                0: {
-                    "strategy": "Player 0 strategy at round 1.",
-                    "response": "Player 0 response at round 1.",
-                },
-                1: {
-                    "strategy": "Player 1 strategy at round 1.",
-                    "response": "Player 1 response at round 1.",
-                },
-                2: {
-                    "strategy": "Player 2 strategy at round 1.",
-                    "response": "Player 2 response at round 1.",
-                },
-                3: {
-                    "strategy": "Player 3 strategy at round 1.",
-                    "response": "Player 3 response at round 1.",
-                },
-                4: {
-                    "strategy": "Player 4 strategy at round 1.",
-                    "response": "Player 4 response at round 1.",
-                },
+                {
+                    i: {
+                        "strategy": f"player {i}'s strategy at round 1.",
+                        "response": f"player {i}'s response at round 1.",
+                    }
+                    for i in range(n_players)
+                }
             }
         ],
         "team_props": [],
@@ -668,9 +626,9 @@ def test_guess_belief_servant_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
-    merlin_id = preset["role_names"].index("Merlin")
     agent = VllmAgent(
         add_strategy_in_prompt=False,
         use_summary=True,
@@ -689,9 +647,10 @@ def test_guess_belief_servant_round1():
     )
 
     # first player belief  guess
-    servant_id = preset["role_names"].index("Servant")
-    minion_id = preset["role_names"].index("Minion")
-    merlin_id = preset["role_names"].index("Merlin")
+    roles = [role[1] for role in env.get_roles()]
+    servant_id = roles.index("Servant")
+    minion_id = roles.index("Minion")
+    merlin_id = roles.index("Merlin")
     # tgt is merlin
     req = Request(
         prompt=None,
@@ -738,32 +697,18 @@ def test_guess_belief_servant_round1():
 
 
 def test_guess_belief_minion_round1():
-    preset = json.load(open("data/avalon/dev.json"))[0]
-    env = AvalonGameEnvironment.from_presets(preset)
+    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    env = AvalonGameEnvironment(config)
+    n_players = len(env.get_roles())
     history = {
         "leaders": [0],
         "team_discs": [
             {
-                0: {
-                    "strategy": "Player 0 strategy at round 1.",
-                    "response": "Player 0 response at round 1.",
-                },
-                1: {
-                    "strategy": "Player 1 strategy at round 1.",
-                    "response": "Player 1 response at round 1.",
-                },
-                2: {
-                    "strategy": "Player 2 strategy at round 1.",
-                    "response": "Player 2 response at round 1.",
-                },
-                3: {
-                    "strategy": "Player 3 strategy at round 1.",
-                    "response": "Player 3 response at round 1.",
-                },
-                4: {
-                    "strategy": "Player 4 strategy at round 1.",
-                    "response": "Player 4 response at round 1.",
-                },
+                i: {
+                    "strategy": f"player {i}'s strategy at round 1.",
+                    "response": f"player {i}'s response at round 1.",
+                }
+                for i in range(n_players)
             }
         ],
         "team_props": [],
@@ -779,6 +724,7 @@ def test_guess_belief_minion_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     agent = VllmAgent(
@@ -799,10 +745,11 @@ def test_guess_belief_minion_round1():
     )
 
     # first player belief  guess
-    servant_id = preset["role_names"].index("Servant")
-    minion_id = preset["role_names"].index("Minion")
-    ass_id = preset["role_names"].index("Assassin")
-    merlin_id = preset["role_names"].index("Merlin")
+    roles = [role[1] for role in env.get_roles()]
+    servant_id = roles.index("Servant")
+    minion_id = roles.index("Minion")
+    merlin_id = roles.index("Merlin")
+    merlin_id = roles.index("Assassin")
     # tgt is merlin
     for tgt_id in [merlin_id, minion_id, ass_id]:
         history["role_belief"] = []
@@ -892,6 +839,7 @@ def test_team_proposal_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     agent = VllmAgent(
@@ -982,6 +930,7 @@ def test_team_vote_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     agent = VllmAgent(
@@ -1094,6 +1043,7 @@ def test_quest_vote_round1():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     agent = VllmAgent(
@@ -1247,6 +1197,7 @@ def test_assassin():
         ],
         "input_tokens": 0,
         "output_tokens": 0,
+        "n_error": 0,
         "id": 1,
     }
     agent = VllmAgent(
@@ -1290,15 +1241,14 @@ def test_assassin():
 
 
 if __name__ == "__main__":
-    logger = get_logger(logger_level="debug", console_level="info")
     test_too_many_error()
-    # test_team_discussion_round1()
-    # test_guess_role_round1()
-    # test_guess_belief_merlin_round1()
-    # test_guess_belief_servant_round1()
-    # test_guess_belief_minion_round1()
-    # test_summarize_round1()
-    # test_team_proposal_round1()
-    # test_team_vote_round1()
-    # test_quest_vote_round1()
-    # test_assassin()
+    test_team_discussion_round1()
+    test_guess_role_round1()
+    test_guess_belief_merlin_round1()
+    test_guess_belief_servant_round1()
+    test_guess_belief_minion_round1()
+    test_summarize_round1()
+    test_team_proposal_round1()
+    test_team_vote_round1()
+    test_quest_vote_round1()
+    test_assassin()

@@ -1,10 +1,18 @@
 from typing import List, Literal, Dict, Any, Union
-from src.utils.misc import _parse_json
+from src.utils.misc import (
+    format_history,
+    get_game_info_prompt,
+    parse_json,
+    get_player_str,
+)
 from src.server.tasks.avalon.engine import AvalonBasicConfig
 from src.utils.vllm_misc import Request, RequestStatus
 from src.server.tasks.avalon.agents.agent import Agent
 from src.server.tasks.avalon.my_prompts import (
     INTRODUCTION,
+    MERLIN_REVEAL_PROMPT,
+    EVIL_REVEAL_PROMPT,
+    PERCIVAL_REVEAL_PROMPT,
     SUMMARIZE,
     TEAM_DISCUSSION,
     PROPOSE_TEAM_PROMPT,
@@ -87,61 +95,6 @@ class VllmAgent:
     def see_sides(self, sides):
         self.player_sides = sides
 
-    def get_game_info_prompt(self, player_list, player_id) -> None:
-        """Initiliaze the game info for the agent, which includes game introduction, role, and reveal information for different roles."""
-        # Introduction Prompt
-        verbal_side = ["Evil", "Good"]
-        intro_prompt = INTRODUCTION
-        intro_prompt += "\n"
-
-        minion = ""
-        servant_list = []
-        assassin = ""
-        merlin = ""
-        name = f"Player {player_id}"
-        role_name = player_list[player_id][1]
-        for idx, player_info in enumerate(player_list):
-            if player_info[1] == "Minion":
-                minion = str(idx)
-            elif player_info[1] == "Servant":
-                servant_list.append(str(idx))
-            elif player_info[1] == "Assassin":
-                assassin = str(idx)
-            elif player_info[1] == "Merlin":
-                merlin = str(idx)
-            else:
-                raise ValueError(f"Unrecognized role: {player_info[1]}")
-
-        identity_prompt = f"You are {name}, with identity {role_name}."
-
-        reveal_prompt = ""
-        good_team = sorted(servant_list + [merlin])
-        if role_name == "Merlin":
-            reveal_prompt = (
-                f"You know that Players {minion} and {assassin} are Evil, and Players"
-                f" {', '.join(servant_list)} are Servants."
-            )
-            strategy = "Guide your team to select good team members during discussion in a subtle way. During team voting, always reject teams with evil team players."
-        elif role_name == "Minion":
-            reveal_prompt = (
-                f"You know that Player {assassin} is Assassin, and Players"
-                f" {', '.join(good_team)} are on the good team, but you do not know who is Merlin."
-            )
-            strategy = "Include exactly one evil team player in the team. Only approve teams with at least one evil team player."
-        elif role_name == "Assassin":
-            reveal_prompt = (
-                f"You know that Player {minion} is Minion, and Players"
-                f" {', '.join(good_team)} are on the good team, but you do not know who is Merlin."
-            )
-            strategy = "Include exactly one evil team player in the team. Only approve teams with at least one evil team player."
-        else:
-            strategy = "Choose players exclusively from the good team. Only approve teams composed entirely of players from the good team. Always include yourself in the team and reject those do not."
-
-        system_info = intro_prompt.strip()
-        if self.add_strategy_in_prompt:
-            reveal_prompt += " " + strategy
-        return system_info, identity_prompt, reveal_prompt
-
     def vote_on_team(self, req: Request) -> Dict[str, Union[str, bool]]:
         """
         Vote on a given team.
@@ -188,7 +141,7 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp_dict: Dict[str, str] = _parse_json(req.resp)
+                resp_dict: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
                 req.history["n_error"] += 1
@@ -325,7 +278,7 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp_dict: Dict[str, str] = _parse_json(req.resp)
+                resp_dict: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.history["n_error"] += 1
                 req.buffer["trial"] += 1
@@ -435,7 +388,7 @@ class VllmAgent:
         Returns:
             int: The id of the player to assassinate. The id is in the range [0, num_players).
         """
-        num_players = 5
+        num_players = len(req.env.get_roles())
         if req.status == RequestStatus.ASSASSIN_GET_PROMPT:
             prompt = (
                 self._get_prompt_prefix(
@@ -462,7 +415,7 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp_dict: Dict[str, str] = _parse_json(req.resp)
+                resp_dict: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
                 req.history["n_error"] += 1
@@ -616,160 +569,23 @@ class VllmAgent:
         else:
             raise ValueError(f"Unknown status code: {req.status}")
 
-    @staticmethod
-    def get_history_str(
-        history: Dict[str, Any],
-        strategy_idx: int = None,
-        n_rounds_to_skip: int = 0,
-        summary_idx: int = None,
-        use_summary: bool = False,
-    ) -> str:
-        output = ["### Game Play History"]
-        n_round = len(history["leaders"])
-        start_round = 0
-
-        if (
-            use_summary
-            and history["summaries"]
-            and summary_idx in history["summaries"][0]
-        ):
-            # This last condition is just  to ensure we have at least
-            # one summary. We either use the summary in the last round
-            # if it exists, or second last round when summarizing, because
-            # an empty place holder is inserted.
-            # history['summaries'][0][0] = {'prompt': ..., 'resp': ...}
-            if summary_idx in history["summaries"][-1]:
-                start_round = len(history["summaries"]) - 1
-            else:
-                assert summary_idx in history["summaries"][-2]
-                start_round = len(history["summaries"]) - 2
-            output.append("\n#### Previous Game Play Summary")
-            output.append(
-                history["summaries"][start_round][summary_idx]["resp"]
-            )
-
-        for i in range(start_round, n_round):
-            if i < n_rounds_to_skip:
-                continue
-            # history.append(f"Leader is Player {history['leaders'][i]}")
-            include_cur_round_diss = (
-                use_summary
-                and (
-                    i >= len(history["summaries"])
-                    or summary_idx not in history["summaries"][i]
-                )
-            ) or not use_summary
-            if include_cur_round_diss and any(
-                resp for resp in history["team_discs"][i].values()
-            ):
-                output.append(f"\n#### Round {i + 1} Discussion")
-                if (
-                    strategy_idx is not None
-                    and strategy_idx in history["team_discs"][i]
-                ):
-                    output.append(
-                        f"**Strategy:** {history['team_discs'][i][strategy_idx]['strategy']}"
-                    )
-                for p_i, resp in enumerate(history["team_discs"][i].values()):
-                    if resp:
-                        output.append(f"Player {p_i}: {resp['response']}")
-
-            if i < len(history["team_props"]):
-                output.append(f"\n#### Round {i+1} Proposed Team")
-                if (
-                    strategy_idx is not None
-                    and history["leaders"][i] == strategy_idx
-                ):
-                    output.append(
-                        f"**Strategy:** {history['team_props'][i]['rationale']}"
-                    )
-                players = []
-                for player in history["team_props"][i]["team"]:
-                    players.append(f"Player {player}")
-                output.append(
-                    f"The leader, Player {history['leaders'][i]}, proposed "
-                    + ", ".join(players[:-1])
-                    + ", and "
-                    + players[-1]
-                    + "."
-                )
-
-            if i < len(history["team_votes"]):
-                output.append(f"\n#### Round {i+1} Team Votes")
-                if strategy_idx is not None:
-                    output.append(
-                        f"**Strategy:** {history['team_votes'][i]['votes'][strategy_idx]['rationale']}"
-                    )
-                    output.append(
-                        f"**Your Vote:** {'Approve' if history['team_votes'][i]['votes'][strategy_idx]['vote'] else 'reject'}."
-                    )
-                num_approves = sum(
-                    vote["vote"]
-                    for vote in history["team_votes"][i]["votes"].values()
-                )
-
-                output.append(
-                    f"{num_approves} player(s)"
-                    " approved,"
-                    f" {len(history['team_votes'][i]['votes']) - num_approves} player(s)"
-                    " rejected."
-                )
-                output.append(
-                    "Team result: The proposed team is"
-                    f" {'approved' if history['team_votes'][i]['result'] else 'rejected'}."
-                )
-
-            if (
-                i < len(history["team_votes"])
-                and history["team_votes"][i]["result"]
-                and i < len(history["quest_votes"])
-                and history["quest_votes"][i]
-            ):
-                output.append(f"\n#### Round {i+1} Quest Votes")
-                if (
-                    strategy_idx is not None
-                    and strategy_idx in history["team_props"][i]["team"]
-                ):
-                    _idx = history["team_props"][i]["team"].index(strategy_idx)
-                    output.append(
-                        f"**Strategy:** {history['quest_votes'][i]['votes'][_idx]['rationale']}"
-                    )
-
-                num_approves = sum(
-                    vote["vote"]
-                    for vote in history["quest_votes"][i]["votes"].values()
-                )
-                output.append(
-                    f"{num_approves} player(s)"
-                    " passed,"
-                    f" {len(history['quest_votes'][i]['votes']) - num_approves} player(s)"
-                    " failed."
-                )
-                output.append(
-                    "Quest result: The mission"
-                    f" {'succeeded' if history['quest_votes'][i]['result'] else 'failed'}."
-                )
-        history_str = "\n".join(output)
-        if len(output) == 1:
-            history_str += "\nNone."
-        return history_str.strip()
-
     def _get_prompt_prefix(
         self, history, player_id, player_list, n_rounds_to_skip: int = 0
     ):
 
-        history_str = self.get_history_str(
+        history_str = format_history(
             history,
             player_id if self.add_strategy_in_prompt else None,
             n_rounds_to_skip=n_rounds_to_skip,
-            use_summary=self.use_summary,
             summary_idx=player_id if self.use_summary else None,
+            use_summary=self.use_summary,
         )
-        system_info, identity_prompt, reveal_prompt = (
-            self.get_game_info_prompt(
-                player_list=player_list, player_id=player_id
-            )
+        system_info, identity_prompt, reveal_prompt = get_game_info_prompt(
+            player_list=player_list,
+            player_id=player_id,
+            add_strategy_in_prompt=self.add_strategy_in_prompt,
         )
+
         prompt = system_info + "\n\n" + history_str
 
         prompt += (
@@ -786,7 +602,6 @@ class VllmAgent:
         )
         req.buffer["msg"] = req.buffer["msg"][:1]
         prompt = self._get_prompt_from_msg(req.buffer["msg"])
-        req.buffer["prompt"] = prompt
         req.buffer["trial"] = 0
         prompt = self._get_prompt_from_msg(req.buffer["msg"])
         return prompt, status
@@ -806,8 +621,7 @@ class VllmAgent:
             2: Success.
 
         """
-        team_size = 5
-        n_round = len(req.history["leaders"])
+        team_size = req.env.get_team_size()
         team_leader_id: int = req.history["leaders"][-1]
         player_id: int = req.player_idx
         if req.status == RequestStatus.TEAM_DISCUSSION_GET_PROMPT:
@@ -820,7 +634,7 @@ class VllmAgent:
                 prompt += " You are the Quest leader of this round."
             else:
                 prompt += f" Player {team_leader_id} is the Quest leader of this round."
-            prompt += f" This Quest requires a team of {team_size} players"
+            prompt += f" This Quest requires a team of {team_size} players."
 
             # history.append(f"Leader is Player {self.history['leaders'][i]}")
             if not any(resp for resp in req.history["team_discs"][-1]):
@@ -835,7 +649,7 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp: Dict[str, str] = _parse_json(req.resp)
+                resp: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.history["n_error"] += 1
                 req.buffer["trial"] += 1
@@ -911,6 +725,7 @@ class VllmAgent:
         req,
     ) -> Dict[str, Union[str, List[int]]]:
         team_size = req.env.get_team_size()
+        n_players = len(req.env.get_roles())
         if req.status == RequestStatus.TEAM_PROPOSAL_GET_PROMPT:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
@@ -919,7 +734,7 @@ class VllmAgent:
             )
             prompt += " " + PROPOSE_TEAM_PROMPT.replace(
                 "{num_player}", str(team_size)
-            ).replace("{max_player_id}", "4")
+            ).replace("{max_player_id}", f"{n_players-1}")
 
             req.buffer["msg"] = [{"role": "user", "content": prompt}]
             req.buffer["prompt"] = prompt
@@ -930,7 +745,7 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp_dict: Dict[str, str] = _parse_json(req.resp)
+                resp_dict: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
                 req.history["n_error"] += 1
@@ -1056,7 +871,7 @@ class VllmAgent:
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_PROPOSAL_CHECK_ERROR
                 elif any(
-                    not isinstance(mem, int) or mem < 0 or mem >= 5
+                    not isinstance(mem, int) or mem < 0 or mem >= n_players
                     for mem in resp_dict["team"]
                 ):
                     err_msg = f"Proposed team contains invalid player ids: {resp_dict['team']}. Max player id is 4."
@@ -1151,43 +966,40 @@ class VllmAgent:
 
         """
         n_rounds_to_skip = 0
+        n_players = len(req.env.get_roles())
         role_name: str = req.history["roles"][req.player_idx][1]
+        good_roles: List[str] = [
+            role[1] for role in req.env.get_roles() if role[2]
+        ]
+        bad_roles: List[str] = [
+            role[1] for role in req.env.get_roles() if not role[2]
+        ]
         if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
             if "tgt_player_i" in req.args:
                 player_i = req.args["tgt_player_i"]
                 tgt_role: str = req.history["roles"][player_i][1]
-            elif role_name == "Servant":
+            elif role_name == "Merlin":
+                raise ValueError("Merlin should not guess other's role.")
+            elif role_name in good_roles:
                 # randomly pick another player
                 player_i = self.seeder.choice(
-                    [i for i in range(5) if i != req.player_idx]
+                    [i for i in range(n_players) if i != req.player_idx]
                 )
                 tgt_role: str = req.history["roles"][player_i][1]
                 # sample a false role
                 if self.seeder.random() < 0.5:
                     tgt_roles = set(
-                        [
-                            "Merlin",
-                            "Servant",
-                            "Assassin",
-                            "Minion",
-                        ]
+                        [role[1] for role in req.env.get_roles()]
                     ) - set([tgt_role])
                     tgt_role = self.seeder.choice(list(tgt_roles))
-            elif role_name in [
-                "Assassin",
-                "Minion",
-            ]:
+            elif role_name in bad_roles:
                 player_i, tgt_role = self.seeder.choice(
                     [
                         (i, role[1])
                         for i, role in enumerate(req.history["roles"])
-                        if role[1] in ["Servant", "Merlin"]
+                        if role[1] in good_roles
                     ]
                 )
-                if self.seeder.random() < 0.5:
-                    tgt_role = "Merlin" if tgt_role == "Servant" else "Servant"
-            else:
-                raise ValueError("Merlin should not guess other's role.")
 
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
@@ -1231,7 +1043,7 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp_dict: Dict[str, str] = _parse_json(req.resp)
+                resp_dict: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
                 req.history["n_error"] += 1
@@ -1402,29 +1214,24 @@ class VllmAgent:
                 return prompt, RequestStatus.ROLE_GUESS_SUCCEED
 
     def guess_belief(self, req: Request) -> Dict[str, Any]:
+        n_players = len(req.env.get_roles())
         if "tgt_player_i" in req.args:
             tgt_player_i = req.args["tgt_player_i"]
         else:
             tgt_player_i = self.seeder.choice(
-                [i for i in range(5) if i != req.player_idx]
+                [i for i in range(n_players) if i != req.player_idx]
             )
-        tgt_role = self.seeder.choice(
-            ["Merlin", "Servant", "Minion", "Assassin"]
-        )
+        all_roles = list(set([role[1] for role in req.env.get_roles()]))
+        tgt_role = self.seeder.choice(all_roles)
         if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
                 history=req.history,
                 player_list=req.env.get_roles(),
             )
-            if tgt_role in ["Minion", "Assassin"]:
-                prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
-                    "{i}", str(tgt_player_i)
-                ).replace("{role}", "Minion or Assassin")
-            else:
-                prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
-                    "{i}", str(tgt_player_i)
-                ).replace("{role}", tgt_role)
+            prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
+                "{i}", str(tgt_player_i)
+            ).replace("{role}", tgt_role)
             messages = [{"role": "user", "content": prompt}]
             req.buffer["trial"] = 0
             req.buffer["prompt"] = prompt
@@ -1437,20 +1244,13 @@ class VllmAgent:
             try:
                 if "init_resp" not in req.buffer:
                     req.buffer["init_resp"] = req.resp
-                resp_dict: Dict[str, str] = _parse_json(req.resp)
+                resp_dict: Dict[str, str] = parse_json(req.resp)
             except json.JSONDecodeError:
                 req.buffer["trial"] += 1
                 req.history["n_error"] += 1
+
                 if req.buffer["trial"] >= self.max_trials:
-                    LOGGER.debug(
-                        f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
-                    )
-                    req.buffer["msg"] = req.buffer["msg"][:1]
-                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
-                    req.buffer["prompt"] = prompt
-                    req.buffer["trial"] = 0
-                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
-                    return prompt, RequestStatus.ROLE_BELIEF_CHECK_ERROR
+                    self._retry(req, RequestStatus.ROLE_BELIEF_CHECK_ERROR)
                 err_msg = f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
                 LOGGER.debug(err_msg)
                 messages = req.buffer["msg"]

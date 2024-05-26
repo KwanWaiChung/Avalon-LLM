@@ -1,5 +1,6 @@
-from typing import ClassVar, List, Optional, Dict
+import random
 import numpy as np
+from typing import ClassVar, List, Optional, Dict
 from pydantic import BaseModel
 from .avalon_exception import AvalonEnvException
 
@@ -152,7 +153,8 @@ class AvalonGameEnvironment:
     - quest_leader (int): The id of the quest leader
     """
 
-    def __init__(self, config: AvalonBasicConfig) -> None:
+    def __init__(self, config: AvalonBasicConfig, seed: int = 111) -> None:
+        self.seeder = random.Random(seed)
         for key, value in config.dict().items():
             setattr(self, key, value)
 
@@ -221,7 +223,7 @@ class AvalonGameEnvironment:
         self.turn = 0
         self.done = False
         self.good_victory = False
-        self.quest_leader = np.random.randint(0, self.num_players - 1)
+        self.quest_leader = self.seeder.randint(0, self.num_players)
 
         self.quest_results = []
         self.quest_team = []
@@ -239,8 +241,9 @@ class AvalonGameEnvironment:
         self.is_good = np.full(self.num_players, True)
 
         # choose num_evil players to be evil
-        evil_players = np.random.choice(
-            range(self.num_players), self.num_evil, replace=False
+        evil_players = self.seeder.sample(
+            range(self.num_players),
+            k=self.num_evil,
         )
         self.is_good[evil_players] = False
 
@@ -257,8 +260,9 @@ class AvalonGameEnvironment:
         evil_roles += [6] * (self.num_evil - len(evil_roles))
 
         # assign evil roles randomly
-        self.roles[evil_players] = np.random.choice(
-            evil_roles, self.num_evil, replace=False
+        self.roles[evil_players] = self.seeder.sample(
+            evil_roles,
+            k=self.num_evil,
         )
 
         # create good roles
@@ -273,8 +277,8 @@ class AvalonGameEnvironment:
 
         # assign good roles randomly
         good_players = np.where(self.is_good)[0]
-        self.roles[good_players] = np.random.choice(
-            good_roles, self.num_good, replace=False
+        self.roles[good_players] = self.seeder.sample(
+            good_roles, k=self.num_good
         )
 
         # return list of role names
@@ -352,6 +356,9 @@ class AvalonGameEnvironment:
         #     raise AvalonEnvException("Invalid team size")
 
         if len(team) != self.num_players_for_quest[self.turn]:
+            import pdb
+
+            pdb.set_trace()
             raise AvalonEnvException("Invalid team size")
 
         # check if leader is quest leader
