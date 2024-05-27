@@ -323,7 +323,10 @@ def format_history(
 
         if i < len(history["team_votes"]):
             output.append(f"\n#### Round {i+1} Team Votes")
-            if strategy_idx is not None:
+            if (
+                strategy_idx is not None
+                and strategy_idx in history["team_votes"][i]["votes"]
+            ):
                 output.append(
                     f"**Strategy:** {history['team_votes'][i]['votes'][strategy_idx]['rationale']}"
                 )
@@ -355,11 +358,10 @@ def format_history(
             output.append(f"\n#### Round {i+1} Quest Votes")
             if (
                 strategy_idx is not None
-                and strategy_idx in history["team_props"][i]["team"]
+                and strategy_idx in history["quest_votes"][i]["votes"]
             ):
-                _idx = history["team_props"][i]["team"].index(strategy_idx)
                 output.append(
-                    f"**Strategy:** {history['quest_votes'][i]['votes'][_idx]['rationale']}"
+                    f"**Strategy:** {history['quest_votes'][i]['votes'][strategy_idx]['rationale']}"
                 )
 
             num_approves = sum(

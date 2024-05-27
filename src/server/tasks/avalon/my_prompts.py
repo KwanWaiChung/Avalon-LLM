@@ -130,9 +130,8 @@ PERCIVAL_REVEAL_PROMPT = (
     """Among {players}, one is Merlin and the other is Morgana."""
 )
 
-SERVANT_STRATEGY = """Always include yourself in the proposed team.
-Only approve teams that you believe consist solely of Good players.
-Any team that does not include you, or that you suspect includes Evil players, must be rejected."""
+SERVANT_STRATEGY = """Always include yourself if you propose a team.
+Only approve teams that you believe consist solely of Good players."""
 
 MERLIN_STRATEGY = """Guide your team to select Good team members during discussion in a subtle way to prevent being identified by Evil players. 
 Always reject teams with Evil players."""

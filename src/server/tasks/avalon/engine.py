@@ -223,7 +223,7 @@ class AvalonGameEnvironment:
         self.turn = 0
         self.done = False
         self.good_victory = False
-        self.quest_leader = self.seeder.randint(0, self.num_players)
+        self.quest_leader = self.seeder.randint(0, self.num_players - 1)
 
         self.quest_results = []
         self.quest_team = []

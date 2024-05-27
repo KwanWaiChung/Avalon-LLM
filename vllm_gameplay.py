@@ -332,10 +332,6 @@ class RequestProcessor:
             RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
             RequestStatus.TEAM_DISCUSSION_CHECK_ERROR,
         ]:
-            if self.logger:
-                self.logger.info(
-                    f"Game number: {req.game_idx}. Team selection phase, the leader is Player {req.history['leaders'][-1]}."
-                )
             if not self.to_discuss:
                 if self.logger:
                     self.logger.debug(
@@ -356,6 +352,10 @@ class RequestProcessor:
                         req_queue=req_queue,
                     )
                 return
+            if self.logger and req.status == RequestStatus:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Team discussion phase, the leader is Player {req.history['leaders'][-1]}, current player is Player {req.player_idx}."
+                )
             if len(req.history["team_discs"]) < n_round:
                 req.history["team_discs"].append({})
             player_id = req.player_idx
@@ -443,6 +443,10 @@ class RequestProcessor:
                     req_queue=req_queue,
                 )
                 return
+            if self.logger and RequestStatus.ROLE_GUESS_GET_PROMPT:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Role guess phase. Current player is Player {req.player_idx}."
+                )
             if len(req.history["role_guess"]) < n_round:
                 req.history["role_guess"].append({})
             if (
@@ -552,6 +556,10 @@ class RequestProcessor:
                     req_queue=req_queue,
                 )
                 return
+            if self.logger and RequestStatus.ROLE_BELIEF_GET_PROMPT:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Belief guess phase. Current player is Player {req.player_idx}."
+                )
             if len(req.history["role_belief"]) < n_round:
                 req.history["role_belief"].append({})
 
@@ -595,7 +603,7 @@ class RequestProcessor:
                     if tgt_role in bad_roles:
                         if self.logger:
                             self.logger.info(
-                                f"Since {tgt_role} knows the role of all players, we did not add extra role guessing prompt."
+                                f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
                             )
                     else:
                         self.process_req(
@@ -676,6 +684,10 @@ class RequestProcessor:
                     req_queue=req_queue,
                 )
                 return
+            if self.logger and RequestStatus.SUMMARIZE_GET_PROMPT:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Summarize phase. Current player is Player {req.player_idx}."
+                )
             if len(req.history["summaries"]) < n_round:
                 req.history["summaries"].append({})
             if req.player_idx in req.history["summaries"][n_round - 1]:
@@ -734,12 +746,16 @@ class RequestProcessor:
                         f"Player {req.player_idx} is not the leader and is thus omitted in team_proposal."
                     )
                 return
+            if self.logger:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Team proposal phase. Current player is Player {req.player_idx}."
+                )
             prompt, status = self.agent.propose_team(req)
             if status == RequestStatus.TEAM_PROPOSAL_SUCCEED:
                 resp: Dict[str, str] = req.resp
                 if self.logger:
                     self.logger.info(
-                        f"Game number: {req.game_idx}. Round: {req.env.turn+1}. Team selection phase, the leader, Player {leader}, selected the team {resp['team']}."
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Round: {req.env.turn+1}. Team selection phase, the leader, Player {leader}, selected the team {resp['team']}."
                     )
                 req.history["team_props"].append(resp)
                 req.env.choose_quest_team(
@@ -787,7 +803,7 @@ class RequestProcessor:
                 leader: int = req.history["leaders"][-1]
                 team = req.env.get_current_quest_team()
                 self.logger.info(
-                    f"Game number: {req.game_idx}. Team vote phase, Player {req.player_idx} voting on team {team} chosen by {leader}."
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Team vote phase, Player {req.player_idx} voting on team {team} chosen by {leader}."
                 )
             prompt, status = self.agent.vote_on_team(req)
             if status == RequestStatus.TEAM_VOTE_SUCCEED:
@@ -808,7 +824,7 @@ class RequestProcessor:
                 approved_votes = sum(votes)
                 if self.logger:
                     self.logger.info(
-                        f"Game number: {req.game_idx}. {approved_votes} approved, {len(votes) - approved_votes} failed. The team is {'accepted' if result[-1] else 'failed'}."
+                        f"Game number: {req.game_idx}.  Round: {n_round}. {approved_votes} approved, {len(votes) - approved_votes} failed. The team is {'accepted' if result[-1] else 'failed'}."
                     )
 
                 phase: int = req.env.get_phase()[0]
@@ -874,10 +890,14 @@ class RequestProcessor:
             if req.player_idx not in quest_team:
                 if self.logger:
                     self.logger.debug(
-                        f"Game number: {req.game_idx}. {req.player_idx} not in quest team, so this request is ignored. "
+                        f"Game number: {req.game_idx}.  Round: {n_round}. {req.player_idx} not in quest team, so this request is ignored. "
                     )
                 return
 
+            if self.logger:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Quest vote phase, Player {req.player_idx} voting."
+                )
             prompt, status = self.agent.vote_on_mission(req)
             if status == RequestStatus.QUEST_VOTE_SUCCEED:
                 # `rationale` (str): The rationale for the vote.
@@ -966,6 +986,10 @@ class RequestProcessor:
             RequestStatus.ASSASSIN_CHECK_ERROR,
         ]:
 
+            if self.logger:
+                self.logger.info(
+                    f"Game number: {req.game_idx}.  Round: {n_round}. Assassin phase, Player {req.player_idx} is choosing."
+                )
             prompt, status = self.agent.assassinate(req)
             if status == RequestStatus.ASSASSIN_VOTE_SUCCEED:
                 resp: Dict[str, str] = req.resp

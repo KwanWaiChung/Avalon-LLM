@@ -1260,7 +1260,7 @@ class VllmAgent:
                 prompt = self._get_prompt_from_msg(req.buffer["msg"])
                 return prompt, RequestStatus.ROLE_BELIEF_CHECK_ERROR
             else:
-                for k, t in [("strategy", str), ("score", int)]:
+                for k, t in [("rationale", str), ("score", int)]:
                     if k not in resp_dict:
                         req.buffer["trial"] += 1
                         req.history["n_error"] += 1

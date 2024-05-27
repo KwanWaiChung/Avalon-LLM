@@ -24,7 +24,7 @@ from src.utils.inference import (
     AnyscaleInferenceStrategy,
     LocalInferenceStrategy,
 )
-from src.utils.misc import _parse_json
+from src.utils.misc import parse_json
 from transformers import AutoTokenizer
 import json
 import logging
@@ -269,7 +269,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp_dict: Dict[str, str] = _parse_json(resp)
+                resp_dict: Dict[str, str] = parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -350,7 +350,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp_dict: Dict[str, str] = _parse_json(resp)
+                resp_dict: Dict[str, str] = parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -428,7 +428,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp_dict: Dict[str, str] = _parse_json(resp)
+                resp_dict: Dict[str, str] = parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -681,7 +681,7 @@ class MyLLMAgent(MyAgentBase):
                 resp: str = output["output"]
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
-                resp: Dict[str, str] = _parse_json(resp)
+                resp: Dict[str, str] = parse_json(resp)
             except json.JSONDecodeError:
                 LOGGER.debug(
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -756,7 +756,7 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp: str = output["output"]
-                resp_dict: Dict[str, str] = _parse_json(resp)
+                resp_dict: Dict[str, str] = parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
@@ -993,7 +993,7 @@ class MyLLMAgent(MyAgentBase):
                 self.history["input_tokens"] += output["prompt_len"]
                 self.history["output_tokens"] += output["output_len"]
                 resp: str = output["output"]
-                resp_dict: Dict[str, str] = _parse_json(resp)
+                resp_dict: Dict[str, str] = parse_json(resp)
             except json.JSONDecodeError:
                 err_msg = (
                     f"`{resp}` can't be parsed as JSON. Trial: {i}/{n_trials}."
