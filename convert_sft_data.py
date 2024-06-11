@@ -14,9 +14,13 @@ seeder = random.Random(111)
 def get_summary(
     history, round_i: int, player_i: int
 ) -> Dict[str, Union[str, int]]:
-    prompt = history["summaries"][round_i][player_i]["prompt"]
+    if player_i in history["team_discs"][round_i]:
+        row = history["summaries"][round_i][player_i]
+    else:
+        row = history["summaries"][round_i][str(player_i)]
+    prompt = row["prompt"]
     resp: str = json.dumps(
-        history["summaries"][round_i][player_i]["resp"],
+        row["resp"],
         indent=4,
         ensure_ascii=False,
     )
@@ -36,11 +40,15 @@ def get_team_disc(
 ) -> Dict[str, Union[str, int]]:
     role: str = history["roles"][player_i][1]
     # team_diss
-    prompt = history["team_discs"][round_i][player_i]["prompt"]
+    if player_i in history["team_discs"][round_i]:
+        row = history["team_discs"][round_i][player_i]
+    else:
+        row = history["team_discs"][round_i][str(player_i)]
+    prompt = row["prompt"]
     resp: str = json.dumps(
         {
-            "strategy": history["team_discs"][round_i][player_i]["strategy"],
-            "response": history["team_discs"][round_i][player_i]["response"],
+            "strategy": row["strategy"],
+            "response": row["response"],
         },
         indent=4,
         ensure_ascii=False,
@@ -65,14 +73,19 @@ def get_team_prop(
     player_i: int = history["leaders"][round_i]
     role: str = history["roles"][player_i][1]
     prompt: str = history["team_props"][round_i]["prompt"]
-    resp: str = json.dumps(
-        {
-            "rationale": history["team_props"][round_i]["rationale"],
-            "team": history["team_props"][round_i]["team"],
-        },
-        indent=4,
-        ensure_ascii=False,
-    )
+    # resp: str = json.dumps(
+    #     {
+    #         "rationale": history["team_props"][round_i]["rationale"],
+    #         "team": history["team_props"][round_i]["team"],
+    #     },
+    #     indent=4,
+    #     ensure_ascii=False,
+    # )
+    resp = f"""{{
+    "rationale": {history["team_props"][round_i]["rationale"]},
+    "team": {history["team_props"][round_i]["team"]}
+}}"""
+
     output = {
         "instruction": prompt,
         "output": resp,
@@ -91,17 +104,17 @@ def get_team_vote(
     player_i: int,
 ) -> Dict[str, Union[str, int]]:
     role: str = history["roles"][player_i][1]
-    prompt: str = history["team_votes"][round_i]["votes"][player_i]["prompt"]
+
+    if player_i in history["team_votes"][round_i]:
+        row = history["team_votes"][round_i]["votes"][player_i]
+    else:
+        row = history["team_votes"][round_i]["votes"][str(player_i)]
+
+    prompt: str = row["prompt"]
     resp: str = json.dumps(
         {
-            "rationale": history["team_votes"][round_i]["votes"][player_i][
-                "rationale"
-            ],
-            "vote": (
-                "approve"
-                if history["team_votes"][round_i]["votes"][player_i]["vote"]
-                else "reject"
-            ),
+            "rationale": row["rationale"],
+            "vote": ("approve" if row["vote"] else "reject"),
         },
         indent=4,
         ensure_ascii=False,
@@ -124,7 +137,10 @@ def get_quest_vote(
     player_i: int,
 ) -> Dict[str, Union[str, int]]:
     role: str = history["roles"][player_i][1]
-    voter_i: int = history["team_props"][round_i]["team"].index(player_i)
+    if isinstance(history["quest_votes"][round_i]["votes"], list):
+        voter_i: int = history["team_props"][round_i]["team"].index(player_i)
+    else:
+        voter_i = str(player_i)
 
     prompt: str = history["quest_votes"][round_i]["votes"][voter_i]["prompt"]
     resp: str = json.dumps(
@@ -158,27 +174,42 @@ def get_role_guess(
     round_i: int,
     player_i: int,
 ):
-    src_player_ids: List[int] = [
-        turn["src_player"] for turn in history["role_guess"][round_i]
-    ]
-    if player_i not in src_player_ids:
-        return None
-    src_player_i = src_player_ids.index(player_i)
     role: str = history["roles"][player_i][1]
-    prompt: str = history["role_guess"][round_i][src_player_i]["prompt"]
+    if isinstance(history["role_guess"][round_i], list):
+        src_player_ids: List[int] = [
+            turn["src_player"] for turn in history["role_guess"][round_i]
+        ]
+        if player_i not in src_player_ids:
+            return None
+        src_player_i = src_player_ids.index(player_i)
+    else:
+        if str(player_i) not in history["role_guess"][round_i]:
+            return None
+        src_player_i = str(player_i)
+    row = history["role_guess"][round_i][src_player_i]
+    if isinstance(row, list):
+        row = seeder.choice(row)
+    prompt: str = row["prompt"]
 
-    tgt_role: str = seeder.choice(
-        list(history["role_guess"][round_i][src_player_i]["output"].keys())
-    )
-    new_prompt = GUESS_ONE_ROLE_PROMPT.replace(
-        "{i}", str(history["role_belief"][round_i][src_player_i]["tgt_player"])
-    ).replace("{role}", tgt_role)
-    prompt = prompt.split("Based on the game so far")[0] + new_prompt
-    resp: str = json.dumps(
-        history["role_guess"][round_i][src_player_i]["output"][tgt_role],
-        indent=4,
-        ensure_ascii=False,
-    )
+    if "score" not in row["output"]:
+        tgt_role: str = seeder.choice(list(row["output"].keys()))
+        resp: str = json.dumps(
+            row["output"][tgt_role],
+            indent=4,
+            ensure_ascii=False,
+        )
+        new_prompt = GUESS_ONE_ROLE_PROMPT.replace(
+            "{i}", str(row["tgt_player"])
+        ).replace("{role}", tgt_role)
+        prompt = prompt.split("Based on the game so far")[0] + new_prompt
+    else:
+        prompt = row["prompt"]
+        resp: str = json.dumps(
+            row["output"],
+            indent=4,
+            ensure_ascii=False,
+        )
+
     output = {
         "instruction": prompt,
         "output": resp,
@@ -196,12 +227,21 @@ def get_role_belief(
     round_i: int,
     player_i: int,
 ):
-    src_player_ids: List[int] = [
-        turn["src_player"] for turn in history["role_belief"][round_i]
-    ]
+    if isinstance(history["role_belief"][round_i], list):
+        src_player_ids: List[int] = [
+            turn["src_player"] for turn in history["role_belief"][round_i]
+        ]
+    else:
+        src_player_ids: List[int] = [
+            int(k) for k in history["role_belief"][round_i]
+        ]
+
     if player_i not in src_player_ids:
         return None
     src_player_i = src_player_ids.index(player_i)
+    if isinstance(history["role_belief"][round_i], dict):
+        src_player_i = str(src_player_i)
+
     role: str = history["roles"][player_i][1]
     prompt: str = history["role_belief"][round_i][src_player_i]["prompt"]
     resp: str = json.dumps(
@@ -267,6 +307,7 @@ def main(
         data = [json.loads(row) for row in open(fn)]
         for row in data:
             if row["status"] != "Finished":
+                print("Found one row that is not finished.")
                 continue
             good_win = row["final_result"]
             player_ids = [

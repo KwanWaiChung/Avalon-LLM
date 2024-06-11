@@ -297,7 +297,7 @@ def format_history(
                 output.append(
                     f"**Strategy:** {history['team_discs'][i][strategy_idx]['strategy']}"
                 )
-            for p_i, resp in enumerate(history["team_discs"][i].values()):
+            for p_i, resp in history["team_discs"][i].items():
                 if resp:
                     output.append(f"Player {p_i}: {resp['response']}")
 
@@ -321,7 +321,7 @@ def format_history(
                 + "."
             )
 
-        if i < len(history["team_votes"]):
+        if i < len(history["team_votes"]) and history["team_votes"]["result"]:
             output.append(f"\n#### Round {i+1} Team Votes")
             if (
                 strategy_idx is not None
