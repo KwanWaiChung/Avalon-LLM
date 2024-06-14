@@ -146,6 +146,8 @@ Once you have identified Merlin, act as if you are Merlin yourself. This will he
 MORGANA_STRATEGY = """Always include exactly one Evil player on each mission team. 
 Only approve teams that contain at least one Evil player."""
 
+QUEST_VOTE_STRATEGY = """Good players should always vote to pass Quests. Meanwhile, evil players must balance voting to fail Quests with the risk of being discovered and excluded from future quests."""
+
 MINION_STRATEGY = MORGANA_STRATEGY
 ASSASSIN_STRATEGY = (
     MORGANA_STRATEGY

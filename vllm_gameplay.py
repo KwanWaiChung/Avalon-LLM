@@ -13,6 +13,7 @@ from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
 from src.utils.inference import (
     DummyInferenceStrategy,
     AnyscaleInferenceStrategy,
+    TogetherInferenceStrategy,
     LocalInferenceStrategy,
     OpenAIInferenceStrategy,
 )
@@ -67,7 +68,7 @@ class RequestOutput:
         self.output_len = output_len
 
 
-class SamplingParamsDummy:
+class SamplingParamsWrapper:
     def __init__(
         self,
         temperature: float = 1.0,
@@ -83,7 +84,7 @@ class SamplingParamsDummy:
         self.max_tokens = max_tokens
 
 
-class VllmWrapper:
+class VllmStrategyWrapper:
     # this class wraps local inference pretending to be vllm
     def __init__(self, strategy, model_name, end_tokens=[]):
         self.strategy = strategy
@@ -1035,6 +1036,8 @@ def main(
         Tuple[str, str, int], Tuple[str, str, int]
     ] = None,  # (model_name, model_path, port number)
     n_games=20,
+    game_batch_size: int = None,
+    inference_strategy: str = "vllm",
     seed: int = 111,
     max_tokens: int = 512,
     temperature=0,
@@ -1042,6 +1045,7 @@ def main(
     to_exchange_role_per_setting: bool = True,
     to_discuss=True,
     add_strategy_in_prompt=False,
+    add_quest_strategy_in_prompt=False,
     to_guess_role: bool = False,
     to_guess_multiple_player_role: bool = False,
     to_guess_belief: bool = False,
@@ -1073,6 +1077,8 @@ def main(
         ValueError: _description_
     """
     seeder = random.Random(seed)
+    if game_batch_size is None:
+        game_batch_size = n_games
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_name = os.path.split(output_path)[-1].rsplit(".", 1)[0] + ".txt"
@@ -1093,7 +1099,7 @@ def main(
 
     # init
     reqs = []
-    if DEBUG:
+    if DEBUG or inference_strategy == "local":
         # model = VllmWrapper(
         #     strategy=AnyscaleInferenceStrategy(), model_name=model_name
         # )
@@ -1104,7 +1110,7 @@ def main(
             torch_dtype=torch.float16,
         )
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = VllmWrapper(
+        model = VllmStrategyWrapper(
             strategy=LocalInferenceStrategy(
                 model=model,
                 tokenizer=tokenizer,
@@ -1113,10 +1119,37 @@ def main(
             model_name=model_name,
             end_tokens=[tokenizer.eos_token],
         )
-        sampling_params = SamplingParamsDummy(
+        sampling_params = SamplingParamsWrapper(
             temperature=temperature, top_p=top_p, max_tokens=max_tokens
         )
-    elif model_name is not None:
+    elif inference_strategy == "openai":
+        model = VllmStrategyWrapper(
+            strategy=OpenAIInferenceStrategy(),
+            model_name=model_name,
+            end_tokens=[tokenizer.eos_token],
+        )
+        sampling_params = SamplingParamsWrapper(
+            temperature=temperature, top_p=top_p, max_tokens=max_tokens
+        )
+    elif inference_strategy == "together":
+        model = VllmStrategyWrapper(
+            strategy=TogetherInferenceStrategy(),
+            model_name=model_name,
+            end_tokens=[tokenizer.eos_token],
+        )
+        sampling_params = SamplingParamsWrapper(
+            temperature=temperature, top_p=top_p, max_tokens=max_tokens
+        )
+    elif inference_strategy == "anyscale":
+        model = VllmStrategyWrapper(
+            strategy=AnyscaleInferenceStrategy(),
+            model_name=model_name,
+            end_tokens=[tokenizer.eos_token],
+        )
+        sampling_params = SamplingParamsWrapper(
+            temperature=temperature, top_p=top_p, max_tokens=max_tokens
+        )
+    elif inference_strategy == "vllm" and model_name is not None:
         from vllm import LLM, SamplingParams
 
         model = LLM(
@@ -1128,9 +1161,14 @@ def main(
             max_tokens=max_tokens,
             seed=seed,
         )
+    else:
+        assert (
+            inference_strategy == "vllm"
+        ), "Multiple models are only avilable with vllm."
 
     agent = VllmAgent(
         add_strategy_in_prompt=add_strategy_in_prompt,
+        add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
         use_summary=use_summary,
         chat_template=get_conv_template("llama-3"),
     )
@@ -1147,53 +1185,36 @@ def main(
     )
     histories = []
     config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
-    for game_i in range(1, n_games + 1):
-        env = AvalonGameEnvironment(config, seed=seed + game_i)
-        history = {
-            "leaders": [env.get_quest_leader()],
-            "team_discs": [],
-            "team_props": [],
-            "team_votes": [],
-            "quest_votes": [],
-            "role_guess": [],
-            "role_belief": [],
-            "summaries": [],
-            "assassin": None,
-            "roles": [
-                (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
-                for role_tuple in env.get_roles()
-            ],
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "n_error": 0,
-            "id": game_i,
-        }
-        if model_names is not None:
-            # game 1
-            new_history = deepcopy(history)
-            new_history["models"] = [
-                model_names[0][0] if role[-1] else model_names[1][0]
-                for role in history["roles"]
-            ]
-            reqs.append(
-                Request(
-                    prompt=None,
-                    resp=None,
-                    game_idx=len(reqs) + 1,
-                    player_idx=0,
-                    history=new_history,
-                    env=env,
-                    status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                )
-            )
-            histories.append(new_history)
-
-            # game 2
-            if to_exchange_role_per_setting:
-                env = deepcopy(env)
+    # n_game = 50, game_batch_size = 20,
+    # range(1, 21), range(21, 41), range(41, 51)
+    for start_game_i in range(1, n_games + 1, game_batch_size):
+        end_game_i = min(start_game_i + game_batch_size, n_games + 1)
+        for game_i in range(start_game_i, end_game_i):
+            env = AvalonGameEnvironment(config, seed=seed + game_i)
+            history = {
+                "leaders": [env.get_quest_leader()],
+                "team_discs": [],
+                "team_props": [],
+                "team_votes": [],
+                "quest_votes": [],
+                "role_guess": [],
+                "role_belief": [],
+                "summaries": [],
+                "assassin": None,
+                "roles": [
+                    (int(role_tuple[0]), role_tuple[1], bool(role_tuple[2]))
+                    for role_tuple in env.get_roles()
+                ],
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "n_error": 0,
+                "id": game_i,
+            }
+            if model_names is not None:
+                # game 1
                 new_history = deepcopy(history)
                 new_history["models"] = [
-                    model_names[1][0] if role[-1] else model_names[0][0]
+                    model_names[0][0] if role[-1] else model_names[1][0]
                     for role in history["roles"]
                 ]
                 reqs.append(
@@ -1208,101 +1229,128 @@ def main(
                     )
                 )
                 histories.append(new_history)
-        else:
-            histories.append(history)
-            # (prompt, resp, game idx, history, env, status, buffer)
-            # buffer mainly for storing temporary messages.
-            # The status code performs error checking and processing.
-            reqs.append(
-                Request(
-                    prompt=None,
-                    resp=None,
-                    game_idx=game_i,
-                    player_idx=0,
-                    history=history,
-                    env=env,
-                    status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                )
-            )
 
-    # sample until finish
-    if model_names is not None:
-        pbar = tqdm(total=len(reqs), desc="Sampling games")
-    else:
-        pbar = tqdm(total=len(reqs), desc="Sampling games")
-    count = 0
-    while reqs:
-        new_reqs = []
-        for req in reqs:
-            req_processor.process_req(
-                req=req,
-                req_queue=new_reqs,
-            )
-        reqs = new_reqs
-        if model_name is not None:
-            resps = model.generate(
-                [req.prompt for req in reqs],
-                sampling_params=sampling_params,
-                # use_tqdm=False,
-            )
-        else:
-            args = []
-            p = Pool(500)
-            for req in reqs:
-                for model_i in range(2):
-                    if (
-                        req.history["models"][req.player_idx]
-                        == model_names[model_i][0]
-                    ):
-                        args.append(
-                            (
-                                req.prompt,
-                                model_names[model_i][1],
-                                max_tokens,
-                                temperature,
-                                top_p,
-                                f"http://localhost:{model_names[model_i][2]}/v1",
-                            )
+                # game 2
+                if to_exchange_role_per_setting:
+                    env = deepcopy(env)
+                    new_history = deepcopy(history)
+                    new_history["models"] = [
+                        model_names[1][0] if role[-1] else model_names[0][0]
+                        for role in history["roles"]
+                    ]
+                    reqs.append(
+                        Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=len(reqs) + 1,
+                            player_idx=0,
+                            history=new_history,
+                            env=env,
+                            status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
                         )
-            outputs = p.starmap(wrapper, args)
-            resps = [
-                RequestOutput(
-                    prompt=req.prompt,
-                    outputs=[output["output"]],
-                    prompt_len=output["prompt_len"],
-                    output_len=output["output_len"],
-                )
-                for req, output in zip(reqs, outputs)
-            ]
-            p.close()
-
-        for req, resp in zip(reqs, resps):
-            req.resp = resp.outputs[0].text
-            if not DEBUG and model_name is not None:
-                req.history["input_tokens"] += len(resp.prompt_token_ids)
-                req.history["output_tokens"] += len(resp.outputs[0].token_ids)
+                    )
+                    histories.append(new_history)
             else:
-                req.history["input_tokens"] += resp.prompt_len
-                req.history["output_tokens"] += resp.output_len
-        pbar.n = req_processor.n_finished_games
-        pbar.refresh()
-        count += 1
-
-        if count % 5 == 0:
-            with open(output_path, "w") as f:
-                f.write(
-                    "\n".join(
-                        [
-                            json.dumps(row, ensure_ascii=False)
-                            for row in histories
-                        ]
+                histories.append(history)
+                # (prompt, resp, game idx, history, env, status, buffer)
+                # buffer mainly for storing temporary messages.
+                # The status code performs error checking and processing.
+                reqs.append(
+                    Request(
+                        prompt=None,
+                        resp=None,
+                        game_idx=game_i,
+                        player_idx=0,
+                        history=history,
+                        env=env,
+                        status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
                     )
                 )
-            logger.info(f"Games saved to {output_path}.")
-        # debug
-        # with open("outputs/reqs.pkl", "wb") as f:
-        #     pickle.dump(reqs, f)
-        # debug
+
+        # sample until finish
+        if model_names is not None:
+            pbar = tqdm(total=len(reqs), desc="Sampling games")
+        else:
+            pbar = tqdm(total=len(reqs), desc="Sampling games")
+        count = 0
+        while reqs:
+            new_reqs = []
+            for req in reqs:
+                req_processor.process_req(
+                    req=req,
+                    req_queue=new_reqs,
+                )
+            reqs = new_reqs
+            if model_name is not None:
+                resps = model.generate(
+                    [req.prompt for req in reqs],
+                    sampling_params=sampling_params,
+                    # use_tqdm=False,
+                )
+            else:
+                args = []
+                p = Pool(500)
+                for req in reqs:
+                    for model_i in range(2):
+                        if (
+                            req.history["models"][req.player_idx]
+                            == model_names[model_i][0]
+                        ):
+                            args.append(
+                                (
+                                    req.prompt,
+                                    model_names[model_i][1],
+                                    max_tokens,
+                                    temperature,
+                                    top_p,
+                                    f"http://localhost:{model_names[model_i][2]}/v1",
+                                )
+                            )
+                outputs = p.starmap(wrapper, args)
+                resps = [
+                    RequestOutput(
+                        prompt=req.prompt,
+                        outputs=[output["output"]],
+                        prompt_len=output["prompt_len"],
+                        output_len=output["output_len"],
+                    )
+                    for req, output in zip(reqs, outputs)
+                ]
+                p.close()
+
+            for req, resp in zip(reqs, resps):
+                req.resp = resp.outputs[0].text
+                if (
+                    not DEBUG
+                    and model_name is not None
+                    and inference_strategy == "vllm"
+                ):
+                    req.history["input_tokens"] += len(resp.prompt_token_ids)
+                    req.history["output_tokens"] += len(
+                        resp.outputs[0].token_ids
+                    )
+                else:
+                    req.history["input_tokens"] += resp.prompt_len
+                    req.history["output_tokens"] += resp.output_len
+            pbar.n = req_processor.n_finished_games
+            pbar.refresh()
+            count += 1
+
+            if count % 5 == 0:
+                with open(output_path, "w") as f:
+                    f.write(
+                        "\n".join(
+                            [
+                                json.dumps(row, ensure_ascii=False)
+                                for row in histories
+                            ]
+                        )
+                    )
+                logger.info(f"Games saved to {output_path}.")
+            # debug
+            # with open("outputs/reqs.pkl", "wb") as f:
+            #     pickle.dump(reqs, f)
+            # debug
 
     # save all
     with open(output_path, "w") as f:

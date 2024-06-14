@@ -52,6 +52,7 @@ from src.server.tasks.avalon.my_prompts import (
     GUESS_ALL_ROLE_PROMPT,
     GUESS_OTHERS_BELIEF_PRMOPT,
     GUESS_ONE_ROLE_PROMPT,
+    QUEST_VOTE_STRATEGY,
 )
 
 seeder = random.Random(233)
@@ -147,7 +148,10 @@ def get_player_str(player_list: List[int]) -> str:
 
 
 def get_game_info_prompt(
-    player_list, player_id, add_strategy_in_prompt=False
+    player_list,
+    player_id,
+    add_strategy_in_prompt=False,
+    add_quest_strategy_in_prompt=False,
 ) -> None:
     """Initiliaze the game info for the agent, which includes game introduction, role, and reveal information for different roles."""
     # Introduction Prompt
@@ -243,6 +247,9 @@ def get_game_info_prompt(
     system_info = intro_prompt.strip()
     if add_strategy_in_prompt:
         reveal_prompt += " " + strategy
+    if add_quest_strategy_in_prompt:
+        reveal_prompt += " " + QUEST_VOTE_STRATEGY
+
     return system_info, identity_prompt, reveal_prompt.strip()
 
 
@@ -298,7 +305,7 @@ def format_history(
                     f"**Strategy:** {history['team_discs'][i][strategy_idx]['strategy']}"
                 )
             for p_i, resp in history["team_discs"][i].items():
-                if resp:
+                if resp and resp["response"].strip():
                     output.append(f"Player {p_i}: {resp['response']}")
 
         if i < len(history["team_props"]):
@@ -321,7 +328,10 @@ def format_history(
                 + "."
             )
 
-        if i < len(history["team_votes"]) and history["team_votes"]["result"]:
+        if (
+            i < len(history["team_votes"])
+            and history["team_votes"][i]["result"] is not None
+        ):
             output.append(f"\n#### Round {i+1} Team Votes")
             if (
                 strategy_idx is not None
@@ -353,7 +363,7 @@ def format_history(
             i < len(history["team_votes"])
             and history["team_votes"][i]["result"]
             and i < len(history["quest_votes"])
-            and history["quest_votes"][i]
+            and history["quest_votes"][i]["result"] is not None
         ):
             output.append(f"\n#### Round {i+1} Quest Votes")
             if (
@@ -364,16 +374,18 @@ def format_history(
                     f"**Strategy:** {history['quest_votes'][i]['votes'][strategy_idx]['rationale']}"
                 )
 
-            num_approves = sum(
-                vote["vote"]
-                for vote in history["quest_votes"][i]["votes"].values()
-            )
-            output.append(
-                f"{num_approves} player(s)"
-                " passed,"
-                f" {len(history['quest_votes'][i]['votes']) - num_approves} player(s)"
-                " failed."
-            )
+            # 'votes' doesn't exist in human data
+            if "votes" in history["quest_votes"][i]:
+                num_approves = sum(
+                    vote["vote"]
+                    for vote in history["quest_votes"][i]["votes"].values()
+                )
+                output.append(
+                    f"{num_approves} player(s)"
+                    " passed,"
+                    f" {len(history['quest_votes'][i]['votes']) - num_approves} player(s)"
+                    " failed."
+                )
             output.append(
                 "Quest result: The mission"
                 f" {'succeeded' if history['quest_votes'][i]['result'] else 'failed'}."

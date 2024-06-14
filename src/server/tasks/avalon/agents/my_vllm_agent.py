@@ -43,6 +43,7 @@ class VllmAgent:
         chat_template: Conversation,
         seed: int = 111,
         add_strategy_in_prompt: bool = False,
+        add_quest_strategy_in_prompt: bool = False,
         use_summary: bool = False,
         max_trials: int = 3,
     ):
@@ -59,6 +60,7 @@ class VllmAgent:
         self.seed = seed
         self.seeder = random.Random(111)
         self.add_strategy_in_prompt = add_strategy_in_prompt
+        self.add_quest_strategy_in_prompt = add_quest_strategy_in_prompt
         self.use_summary = use_summary
         self.max_trials = max_trials
 
@@ -584,6 +586,7 @@ class VllmAgent:
             player_list=player_list,
             player_id=player_id,
             add_strategy_in_prompt=self.add_strategy_in_prompt,
+            add_quest_strategy_in_prompt=self.add_quest_strategy_in_prompt,
         )
 
         prompt = system_info + "\n\n" + history_str
@@ -942,6 +945,254 @@ class VllmAgent:
         else:
             raise ValueError(f"Unknown status: {req.status}")
 
+    def guess_role_wo_env(
+        self,
+        req: Request,
+        to_guess_multiple_player: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Guess the role of a player based on the game state.
+
+        Args:
+            player_i (int): The index of the player to guess.
+
+
+        Returns:
+            A dictionary with keys:
+                - "output": A dictionary containing the guessed role
+                    information.
+                - "prompt": The prompt used to generate the response.
+
+        Raises:
+            ValueError: If the current role is not one of the allowed roles to guess.
+            OutputException: If the response cannot be parsed as JSON after multiple trials.
+
+        """
+        roles = req.history["roles"]
+        role = roles[req.player_idx]
+        tgt_role = req.tgt_role
+        tgt_player_i = req.tgt_player_i
+        # good_roles: List[str] = [
+        #     role[1] for role in req.env.get_roles() if role[2]
+        # ]
+        # bad_roles: List[str] = [
+        #     role[1] for role in req.env.get_roles() if not role[2]
+        # ]
+        if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
+            if role[1] == "Merlin":
+                raise ValueError("Merlin should not guess other's role.")
+
+            prompt = self._get_prompt_prefix(
+                player_id=req.player_idx,
+                history=req.history,
+                player_list=roles,
+            )
+            included_roles = []
+            if not to_guess_multiple_player:
+                prompt += " " + GUESS_ONE_ROLE_PROMPT.replace(
+                    "{i}", str(tgt_player_i)
+                ).replace("{role}", tgt_role)
+            else:
+                if role[1] == "Servant":
+                    prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
+                        "{i}", str(tgt_player_i)
+                    )
+                    included_roles = ["Merlin", "Servant", "Minion"]
+                elif role[1] in [
+                    "Assassin",
+                    "Minion",
+                ]:
+                    prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
+                        "{i}", str(tgt_player_i)
+                    )
+                    included_roles = ["Merlin", "Servant"]
+                else:
+                    raise ValueError(
+                        "Merlin can't guess role since he already know."
+                    )
+            messages = [{"role": "user", "content": prompt}]
+            req.buffer["tgt_role"] = tgt_role
+            req.buffer["tgt_player_i"] = tgt_player_i
+            req.buffer["included_roles"] = included_roles
+            req.buffer["prompt"] = prompt
+            req.buffer["msg"] = messages
+            req.buffer["trial"] = 0
+            prompt = self._get_prompt_from_msg(req.buffer["msg"])
+            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+        elif req.status == RequestStatus.ROLE_GUESS_CHECK_ERROR:
+            try:
+                if "init_resp" not in req.buffer:
+                    req.buffer["init_resp"] = req.resp
+                resp_dict: Dict[str, str] = parse_json(req.resp)
+            except json.JSONDecodeError:
+                req.buffer["trial"] += 1
+                req.history["n_error"] += 1
+                if req.buffer["trial"] >= self.max_trials:
+                    LOGGER.debug(
+                        f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                    )
+                    req.buffer["msg"] = req.buffer["msg"][:1]
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    req.buffer["prompt"] = prompt
+                    req.buffer["trial"] = 0
+                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                    return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                LOGGER.debug(
+                    f"`{req.resp}` can't be parsed as JSON. Trial: {req.buffer['trial']}"
+                )
+                messages = req.buffer["msg"]
+                messages.append({"role": "assistant", "content": req.resp})
+                messages.append({"role": "user", "content": RETRY_JSON_PROMPT})
+                req.buffer["msg"] = messages
+                prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+            else:
+                if to_guess_multiple_player:
+                    role_error = [
+                        role
+                        for role in req.buffer["included_roles"]
+                        if role not in resp_dict
+                    ]
+                    if role_error:
+                        req.buffer["trial"] += 1
+                        req.history["n_error"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                        err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
+                        messages = req.buffer["msg"]
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": req.resp,
+                            }
+                        )
+                        messages.append({"role": "user", "content": err_msg})
+                        req.buffer["msg"] = messages
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                else:
+                    if "score" not in resp_dict:
+                        req.buffer["trial"] += 1
+                        req.history["n_error"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                        err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `score`."
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
+                        messages = req.buffer["msg"]
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": req.resp,
+                            }
+                        )
+                        messages.append({"role": "user", "content": err_msg})
+                        req.buffer["msg"] = messages
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                    elif "rationale" not in resp_dict:
+                        req.buffer["trial"] += 1
+                        req.history["n_error"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                        err_msg = "Your response should follow the specified JSON format. It doesn't contain the key `rationale`."
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
+                        messages = req.buffer["msg"]
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": req.resp,
+                            }
+                        )
+                        messages.append({"role": "user", "content": err_msg})
+                        req.buffer["msg"] = messages
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                    elif (
+                        not isinstance(resp_dict["score"], int)
+                        or resp_dict["score"] < 1
+                        or resp_dict["score"] > 10
+                    ):
+                        req.buffer["trial"] += 1
+                        req.history["n_error"] += 1
+                        if req.buffer["trial"] >= self.max_trials:
+                            LOGGER.debug(
+                                f"Maximum number of trials ({self.max_trials}) reached. Restart the prompt."
+                            )
+                            req.buffer["msg"] = req.buffer["msg"][:1]
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            req.buffer["prompt"] = prompt
+                            req.buffer["trial"] = 0
+                            prompt = self._get_prompt_from_msg(
+                                req.buffer["msg"]
+                            )
+                            return (
+                                prompt,
+                                RequestStatus.ROLE_GUESS_CHECK_ERROR,
+                            )
+                        err_msg = "Your response should provide an integer score from 1 to 10."
+                        LOGGER.debug(
+                            err_msg + f" Trial: {req.buffer['trial']}"
+                        )
+                        messages = req.buffer["msg"]
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": req.resp,
+                            }
+                        )
+                        messages.append({"role": "user", "content": err_msg})
+                        req.buffer["msg"] = messages
+                        prompt = self._get_prompt_from_msg(req.buffer["msg"])
+                        return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
+                req.resp = resp_dict
+                prompt = req.buffer["prompt"]
+                return prompt, RequestStatus.ROLE_GUESS_SUCCEED
+
     def guess_role(
         self,
         req: Request,
@@ -1000,6 +1251,10 @@ class VllmAgent:
                         if role[1] in good_roles
                     ]
                 )
+                # sample a false role
+                if self.seeder.random() < 0.5:
+                    tgt_roles = set(good_roles) - set([tgt_role])
+                    tgt_role = self.seeder.choice(list(tgt_roles))
 
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
@@ -1012,15 +1267,14 @@ class VllmAgent:
                     "{i}", str(player_i)
                 ).replace("{role}", tgt_role)
             else:
-                if role_name == AvalonBasicConfig.ROLES_REVERSE["Servant"]:
+                if role_name == "Servant":
                     prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
                         "{i}", str(player_i)
                     )
                     included_roles = ["Merlin", "Servant", "Minion"]
-
                 elif role_name in [
-                    AvalonBasicConfig.ROLES_REVERSE["Assassin"],
-                    AvalonBasicConfig.ROLES_REVERSE["Minion"],
+                    "Assassin",
+                    "Minion",
                 ]:
                     prompt += " " + GUESS_GOOD_ROLE_PROMPT.replace(
                         "{i}", str(player_i)
