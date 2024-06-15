@@ -1070,7 +1070,7 @@ class VllmAgent:
                                 req.buffer["msg"]
                             )
                             return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
-                        err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`."
+                        err_msg = f"Your response should follow the specified JSON format. It doesn't contain the key `{role_error[0]}`. Received: {json.dumps(resp_dict, indent=4)}"
                         LOGGER.debug(
                             err_msg + f" Trial: {req.buffer['trial']}"
                         )

@@ -100,30 +100,6 @@ def main(
                             "roles": history["roles"],
                             "id": history["id"],
                         }
-                        new_history["leaders"] = new_history["leaders"][
-                            : round_i + 1
-                        ]
-                        new_history["team_discs"] = new_history["team_discs"][
-                            : round_i + 1
-                        ]
-                        new_history["team_props"] = new_history["team_props"][
-                            :round_i
-                        ]
-                        new_history["team_votes"] = new_history["team_votes"][
-                            :round_i
-                        ]
-                        new_history["quest_votes"] = new_history[
-                            "quest_votes"
-                        ][:round_i]
-                        new_history["role_guess"] = new_history["role_guess"][
-                            :round_i
-                        ]
-                        new_history["role_belief"] = new_history[
-                            "role_belief"
-                        ][:round_i]
-                        new_history["summaries"] = new_history["summaries"][
-                            :round_i
-                        ]
                         req = Request(
                             prompt=None,
                             resp=None,

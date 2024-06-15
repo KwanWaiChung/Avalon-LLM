@@ -264,11 +264,20 @@ def format_history(
     n_round = len(history["leaders"])
     start_round = 0
 
+    # make sure summary_idx would be str if it needs to be
+    if (
+        isinstance(summary_idx, int)
+        and history["summaries"]
+        and isinstance(list(history["summaries"][0].keys())[0], str)
+    ):
+        summary_idx = str(summary_idx)
+
     if (
         use_summary
         and history["summaries"]
         and summary_idx in history["summaries"][0]
     ):
+        #
         # This last condition is just  to ensure we have at least
         # one summary. We either use the summary in the last round
         # if it exists, or second last round when summarizing, because
