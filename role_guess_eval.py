@@ -66,8 +66,7 @@ def main(
         seed=seed,
     )
     reqs = []
-    with open(in_fn, "r") as f:
-        data = json.load(f)
+    data = [json.loads(row) for row in open(in_fn)]
     for game_i, history in enumerate(data):
         for round_i in range(len(history["leaders"])):
             for player_idx, role in enumerate(history["roles"]):
