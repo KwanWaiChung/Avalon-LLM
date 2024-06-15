@@ -1,7 +1,7 @@
 import random
 import json
-from vllm import LLM, SamplingParams
 
+from vllm import LLM, SamplingParams
 from strictfire import StrictFire
 from vllm_gameplay import RequestOutput
 from copy import deepcopy
@@ -53,18 +53,7 @@ def main(
     n_gpus: int = 1,
 ):
     seeder = random.Random(seed)
-    agent = VllmAgent(
-        chat_template=get_conv_template("llama-3"),
-        add_strategy_in_prompt=False,
-        use_summary=True,
-    )
-    model = LLM(model=model_name, dtype="float16", tensor_parallel_size=n_gpus)
-    sampling_params = SamplingParams(
-        temperature=temperature,
-        top_p=top_p,
-        max_tokens=max_tokens,
-        seed=seed,
-    )
+
     reqs = []
     data = [json.loads(row) for row in open(in_fn)]
     for game_i, history in enumerate(data):
@@ -94,7 +83,23 @@ def main(
                     tgt_roles.pop(tgt_roles.index(role_name))
                     tgt_roles = set(tgt_roles)
                     for tgt_role in tgt_roles:
-                        new_history = deepcopy(history)
+                        new_history = {
+                            "leaders": history["leaders"][: round_i + 1],
+                            "team_discs": history["team_discs"][: round_i + 1],
+                            "team_props": history["team_props"][: round_i + 1],
+                            "team_votes": history["team_votes"][: round_i + 1],
+                            "quest_votes": history["quest_votes"][
+                                : round_i + 1
+                            ],
+                            "role_guess": history["role_guess"][: round_i + 1],
+                            "role_belief": history["role_belief"][
+                                : round_i + 1
+                            ],
+                            "summaries": history["summaries"][: round_i + 1],
+                            "assassin": history["assassin"],
+                            "roles": history["roles"],
+                            "id": history["id"],
+                        }
                         new_history["leaders"] = new_history["leaders"][
                             : round_i + 1
                         ]
@@ -131,7 +136,18 @@ def main(
                             status=RequestStatus.ROLE_GUESS_GET_PROMPT,
                         )
                         reqs.append(req)
-
+    agent = VllmAgent(
+        chat_template=get_conv_template("llama-3"),
+        add_strategy_in_prompt=False,
+        use_summary=True,
+    )
+    model = LLM(model=model_name, dtype="float16", tensor_parallel_size=n_gpus)
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        seed=seed,
+    )
     res = {}
     while reqs:
         new_reqs = []
