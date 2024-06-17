@@ -149,7 +149,12 @@ Only approve teams that contain at least one Evil player."""
 QUEST_VOTE_STRATEGY = """Good players should always vote to pass Quests. Meanwhile, evil players must balance voting to fail Quests with the risk of being discovered and excluded from future quests."""
 
 MINION_STRATEGY = MORGANA_STRATEGY
+
 ASSASSIN_STRATEGY = (
     MORGANA_STRATEGY
     + """\nPay attention to details that help you identity Merlin."""
 )
+
+GUESS_ROLE_CHEAT_DIFFERENT_HINT = "You cheat in the game and are aware that Player {player_idx} is actually {right_role} but not a {wrong_role}. Use this information in your response and give a low score but do not disclose about your cheating."
+
+GUESS_ROLE_CHEAT_SAME_HINT = "You cheat in the game and are aware that Player {player_idx} is actually {right_role}. Use this information in your response and give a high score but do not disclose about your cheating."

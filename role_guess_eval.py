@@ -1,5 +1,6 @@
 import random
 import json
+import os
 
 from vllm import LLM, SamplingParams
 from strictfire import StrictFire
@@ -10,6 +11,7 @@ from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
 from src.server.tasks.avalon.my_prompts import GUESS_ONE_ROLE_PROMPT
 from src.utils.vllm_misc import RequestStatus
 from typing import Dict, Any
+from src.utils.logger import get_logger
 
 
 class Request:
@@ -51,8 +53,14 @@ def main(
     top_p=1,
     max_tokens: int = 512,
     n_gpus: int = 1,
+    max_trial: int = 10,
 ):
     seeder = random.Random(seed)
+    logger = get_logger(
+        __name__,
+        logger_level="debug",
+        console_level="debug",
+    )
 
     reqs = []
     data = [json.loads(row) for row in open(in_fn)]
@@ -98,6 +106,9 @@ def main(
                             "summaries": history["summaries"][: round_i + 1],
                             "assassin": history["assassin"],
                             "roles": history["roles"],
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "n_error": 0,
                             "id": history["id"],
                         }
                         req = Request(
@@ -116,6 +127,7 @@ def main(
         chat_template=get_conv_template("llama-3"),
         add_strategy_in_prompt=False,
         use_summary=True,
+        max_trials=10,
     )
     model = LLM(model=model_name, dtype="float16", tensor_parallel_size=n_gpus)
     sampling_params = SamplingParams(
@@ -140,7 +152,7 @@ def main(
                     "tgt_player_i": req.tgt_player_i,
                     "tgt_real_role": req.history["roles"][req.tgt_player_i][1],
                 }
-            else:
+            elif req.buffer["trial"] < max_trial:
                 # create another req
                 new_reqs.append(
                     Request(
@@ -156,6 +168,8 @@ def main(
                         buffer=req.buffer,
                     )
                 )
+            else:
+                logger.info(f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role}")
         reqs = new_reqs
 
         # generate resps

@@ -82,7 +82,7 @@ def get_team_prop(
     #     ensure_ascii=False,
     # )
     resp = f"""{{
-    "rationale": {history["team_props"][round_i]["rationale"]},
+    "rationale": "{history["team_props"][round_i]["rationale"]}",
     "team": {history["team_props"][round_i]["team"]}
 }}"""
 
