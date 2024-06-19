@@ -68,18 +68,18 @@ def main(
         for round_i in range(len(history["leaders"])):
             for player_idx, role in enumerate(history["roles"]):
                 role_name = role[1]
+                player_i = seeder.choice(
+                    [
+                        i
+                        for i in range(len(history["roles"]))
+                        if i != player_idx
+                    ]
+                )
                 if role_name == "Merlin":
                     continue
                 elif role[2]:  # Good player
                     # randomly pick another player
                     # choose all roles
-                    player_i = seeder.choice(
-                        [
-                            i
-                            for i in range(len(history["roles"]))
-                            if i != player_idx
-                        ]
-                    )
                     tgt_roles = [
                         "Percival",
                         "Servant",
@@ -90,39 +90,37 @@ def main(
                     ]
                     tgt_roles.pop(tgt_roles.index(role_name))
                     tgt_roles = set(tgt_roles)
-                    for tgt_role in tgt_roles:
-                        new_history = {
-                            "leaders": history["leaders"][: round_i + 1],
-                            "team_discs": history["team_discs"][: round_i + 1],
-                            "team_props": history["team_props"][: round_i + 1],
-                            "team_votes": history["team_votes"][: round_i + 1],
-                            "quest_votes": history["quest_votes"][
-                                : round_i + 1
-                            ],
-                            "role_guess": history["role_guess"][: round_i + 1],
-                            "role_belief": history["role_belief"][
-                                : round_i + 1
-                            ],
-                            "summaries": history["summaries"][: round_i + 1],
-                            "assassin": history["assassin"],
-                            "roles": history["roles"],
-                            "input_tokens": 0,
-                            "output_tokens": 0,
-                            "n_error": 0,
-                            "id": history["id"],
-                        }
-                        req = Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=game_i,
-                            player_idx=player_idx,
-                            round_idx=round_i,
-                            tgt_role=tgt_role,
-                            tgt_player_i=player_i,
-                            history=new_history,
-                            status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                        )
-                        reqs.append(req)
+                else:
+                    tgt_roles = ["Percival", "Servant", "Merlin"]
+                for tgt_role in tgt_roles:
+                    new_history = {
+                        "leaders": history["leaders"][: round_i + 1],
+                        "team_discs": history["team_discs"][: round_i + 1],
+                        "team_props": history["team_props"][: round_i + 1],
+                        "team_votes": history["team_votes"][: round_i + 1],
+                        "quest_votes": history["quest_votes"][: round_i + 1],
+                        "role_guess": history["role_guess"][: round_i + 1],
+                        "role_belief": history["role_belief"][: round_i + 1],
+                        "summaries": history["summaries"][: round_i + 1],
+                        "assassin": history["assassin"],
+                        "roles": history["roles"],
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "n_error": 0,
+                        "id": history["id"],
+                    }
+                    req = Request(
+                        prompt=None,
+                        resp=None,
+                        game_idx=game_i,
+                        player_idx=player_idx,
+                        round_idx=round_i,
+                        tgt_role=tgt_role,
+                        tgt_player_i=player_i,
+                        history=new_history,
+                        status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                    )
+                    reqs.append(req)
     agent = VllmAgent(
         chat_template=get_conv_template("llama-3"),
         add_strategy_in_prompt=False,
@@ -169,7 +167,9 @@ def main(
                     )
                 )
             else:
-                logger.info(f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role}")
+                logger.info(
+                    f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role}"
+                )
         reqs = new_reqs
 
         # generate resps
