@@ -1205,7 +1205,10 @@ class VllmAgent:
                     prompt = self._get_prompt_from_msg(messages)
                     return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                 req.resp = resp_dict
-                prompt = req.buffer["prompt"]
+                if req.buffer["is_dpo"]:
+                    prompt = req.buffer["prompt"][1]
+                else:
+                    prompt = req.buffer["prompt"][0]
                 return prompt, RequestStatus.ROLE_GUESS_SUCCEED
 
     def guess_role_wo_env(

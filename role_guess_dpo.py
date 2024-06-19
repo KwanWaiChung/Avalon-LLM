@@ -181,7 +181,7 @@ def main(
                     )[
                         "normal"
                     ] = {
-                        "score": int(req.resp["score"]),
+                        "resp": req.resp,
                         "tgt_player_i": req.buffer["tgt_player_i"],
                         "tgt_real_role": req.history["roles"][
                             req.buffer["tgt_player_i"]
@@ -196,7 +196,7 @@ def main(
                     )[
                         "dpo"
                     ] = {
-                        "score": int(req.resp["score"]),
+                        "resp": req.resp,
                         "tgt_player_i": req.buffer["tgt_player_i"],
                         "tgt_real_role": req.history["roles"][
                             req.buffer["tgt_player_i"]
