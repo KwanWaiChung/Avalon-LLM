@@ -268,6 +268,7 @@ def format_history(
     if (
         isinstance(summary_idx, int)
         and history["summaries"]
+        and history['summaries'][0]
         and isinstance(list(history["summaries"][0].keys())[0], str)
     ):
         summary_idx = str(summary_idx)
