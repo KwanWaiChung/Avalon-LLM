@@ -259,6 +259,7 @@ def format_history(
     n_rounds_to_skip: int = 0,
     summary_idx: int = None,
     use_summary: bool = False,
+    include_prev_disc: bool = True,
 ) -> str:
     output = ["### Game Play History"]
     n_round = len(history["leaders"])
@@ -268,7 +269,7 @@ def format_history(
     if (
         isinstance(summary_idx, int)
         and history["summaries"]
-        and history['summaries'][0]
+        and history["summaries"][0]
         and isinstance(list(history["summaries"][0].keys())[0], str)
     ):
         summary_idx = str(summary_idx)
@@ -292,18 +293,23 @@ def format_history(
         output.append("\n#### Previous Game Play Summary")
         output.append(history["summaries"][start_round][summary_idx]["resp"])
 
+    last_round_with_disc = [
+        i
+        for i in range(n_round)
+        if any(resp for resp in history["team_discs"][i].values())
+    ][-1]
     for i in range(start_round, n_round):
         if i < n_rounds_to_skip:
             continue
         # history.append(f"Leader is Player {history['leaders'][i]}")
-        include_cur_round_diss = (
+        include_cur_round_disc = (
             use_summary
             and (
                 i >= len(history["summaries"])
                 or summary_idx not in history["summaries"][i]
             )
-        ) or not use_summary
-        if include_cur_round_diss and any(
+        ) or (not include_prev_disc and i == last_round_with_disc)
+        if include_cur_round_disc and any(
             resp for resp in history["team_discs"][i].values()
         ):
             output.append(f"\n#### Round {i + 1} Discussion")

@@ -47,6 +47,7 @@ class VllmAgent:
         add_strategy_in_prompt: bool = False,
         add_quest_strategy_in_prompt: bool = False,
         use_summary: bool = False,
+        include_prev_disc: bool = True,
         max_trials: int = 3,
     ):
         """
@@ -55,7 +56,8 @@ class VllmAgent:
         Args:
             add_strategy_in_prompt (bool): Whether to prompt the recommended strategy.
             max_trials (int): The maximum number of trials to restart prompt.
-
+            include_prev_disc (bool): If `use_summary` is false, this param
+                controls whether we include previous discussions in the prompt.
 
         """
         self.chat_template = chat_template
@@ -64,6 +66,7 @@ class VllmAgent:
         self.add_strategy_in_prompt = add_strategy_in_prompt
         self.add_quest_strategy_in_prompt = add_quest_strategy_in_prompt
         self.use_summary = use_summary
+        self.include_prev_disc = include_prev_disc
         self.max_trials = max_trials
 
     def _get_prompt_from_msg(self, messages: List[Dict[str, str]]) -> str:
@@ -575,6 +578,7 @@ class VllmAgent:
             n_rounds_to_skip=n_rounds_to_skip,
             summary_idx=player_id if self.use_summary else None,
             use_summary=self.use_summary,
+            include_prev_disc=self.include_prev_disc,
         )
         system_info, identity_prompt, reveal_prompt = get_game_info_prompt(
             player_list=player_list,
@@ -1199,9 +1203,9 @@ class VllmAgent:
                     )
                     messages.append({"role": "user", "content": err_msg})
                     if req.buffer["is_dpo"]:
-                        req.buffer['msg'][1] = messages
+                        req.buffer["msg"][1] = messages
                     else:
-                        req.buffer['msg'][0] = messages
+                        req.buffer["msg"][0] = messages
                     prompt = self._get_prompt_from_msg(messages)
                     return prompt, RequestStatus.ROLE_GUESS_CHECK_ERROR
                 req.resp = resp_dict
