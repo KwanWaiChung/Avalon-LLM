@@ -212,8 +212,6 @@ def main(
                         game_idx=req.game_idx,
                         player_idx=req.player_idx,
                         round_idx=req.round_idx,
-                        tgt_role=req.tgt_role,
-                        tgt_player_i=req.tgt_player_i,
                         history=req.history,
                         status=status,
                         buffer=req.buffer,
