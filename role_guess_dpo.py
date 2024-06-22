@@ -67,7 +67,7 @@ def main(
         chat_template=get_conv_template("llama-3"),
         add_strategy_in_prompt=False,
         use_summary=True,
-        max_trials=10,
+        max_trials=100,
     )
     for game_i, history in enumerate(data):
         for round_i in range(len(history["leaders"])):
@@ -212,8 +212,6 @@ def main(
                         game_idx=req.game_idx,
                         player_idx=req.player_idx,
                         round_idx=req.round_idx,
-                        tgt_role=req.tgt_role,
-                        tgt_player_i=req.tgt_player_i,
                         history=req.history,
                         status=status,
                         buffer=req.buffer,
@@ -221,7 +219,7 @@ def main(
                 )
             else:
                 logger.info(
-                    f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role}"
+                    f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role} has exceeded the maximum number of trials {max_trial} and will be ignored."
                 )
         reqs = new_reqs
 
