@@ -1428,7 +1428,7 @@ class VllmAgent:
                             )
                         err_msg = "Your response should provide an integer score from 1 to 10."
                         LOGGER.debug(
-                            err_msg + f" Trial: {req.buffer['trial']}"
+                            err_msg + f" Received: {req.resp}. Trial: {req.buffer['trial']}"
                         )
                         messages = req.buffer["msg"]
                         messages.append(

@@ -60,6 +60,7 @@ def main(
         __name__,
         logger_level="debug",
         console_level="debug",
+        maxBytes=5e-6,
     )
 
     reqs = []
@@ -125,7 +126,7 @@ def main(
         chat_template=get_conv_template("llama-3"),
         add_strategy_in_prompt=False,
         use_summary=True,
-        max_trials=10,
+        max_trials=100,
     )
     model = LLM(model=model_name, dtype="float16", tensor_parallel_size=n_gpus)
     sampling_params = SamplingParams(
@@ -168,7 +169,7 @@ def main(
                 )
             else:
                 logger.info(
-                    f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role}"
+                    f"Request of game_idx={req.game_idx}, player_idx={req.player_idx}, round_idx={req.round_idx}, tgt_role={req.tgt_role} has exceeded the maximum number of trials {max_trial} and will be ignored."
                 )
         reqs = new_reqs
 
