@@ -1050,6 +1050,7 @@ def main(
     to_guess_multiple_player_role: bool = False,
     to_guess_belief: bool = False,
     use_summary: bool = False,
+    include_prev_disc: bool = True,
     n_gpus: int = 1,
     seed_global: bool = False,
 ):
@@ -1174,6 +1175,7 @@ def main(
         add_strategy_in_prompt=add_strategy_in_prompt,
         add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
         use_summary=use_summary,
+        include_prev_disc=include_prev_disc,
         chat_template=get_conv_template("llama-3"),
     )
     req_processor = RequestProcessor(
