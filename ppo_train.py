@@ -78,13 +78,15 @@ class PPODataset(Dataset):
         filename,
         mini_batch_size: int,
         grad_accum: int,
-        n_samples: int,
         tokenizer,
+        n_games: int = -1,
         include_guess_role: bool = False,
         include_guess_belief: bool = False,
     ):
         data = [json.loads(row) for row in open(filename)]
         data = [convert_int_keys(row) for row in data]
+        if n_games > 0:
+            data = data[:n_games]
         out_data = []
         for row in data:
             good_win = row["final_result"]
@@ -96,9 +98,10 @@ class PPODataset(Dataset):
                 )
                 for i, role in enumerate(row["roles"])
             }
-            roles = {i: role[1] for i, role in enumerate(row["roles"])}
+            roles = {i: role for i, role in enumerate(row["roles"])}
+            evil_roles = [role[1] for role in row["roles"] if not role[2]]
             # team disc
-            for disc_round in row["team_discs"]:
+            for round_i, disc_round in enumerate(row["team_discs"]):
                 for player_i, disc_dict in disc_round.items():
                     # ["strategy", "response", "prompt"]
                     out_data.append(
@@ -116,7 +119,9 @@ class PPODataset(Dataset):
                         )
                     )
             # team props
-            for leader, prop_dict in zip(row["leaders"], row["team_props"]):
+            for round_i, (leader, prop_dict) in enumerate(
+                zip(row["leaders"], row["team_props"])
+            ):
                 # ["rationale", "team", "prompt"]
                 out_data.append(
                     (
@@ -134,7 +139,7 @@ class PPODataset(Dataset):
                 )
 
             # team votes
-            for vote_round in row["team_votes"]:
+            for round_i, vote_round in enumerate(row["team_votes"]):
                 for player_i, vote_dict in vote_round["votes"].items():
                     # ["rationale", "team", "prompt"]
                     out_data.append(
@@ -157,7 +162,7 @@ class PPODataset(Dataset):
                     )
 
             # quest votes
-            for vote_round in row["quest_votes"]:
+            for round_i, vote_round in enumerate(row["quest_votes"]):
                 for player_i, vote_dict in vote_round["votes"].items():
                     # ["rationale", "team", "prompt"]
                     out_data.append(
@@ -179,7 +184,7 @@ class PPODataset(Dataset):
 
             # role_guess
             if include_guess_role:
-                for guess_round in row["role_guess"]:
+                for round_i, guess_round in enumerate(row["role_guess"]):
                     for src_player_i, guess_dicts in guess_round.items():
                         tgt_players = set()
                         for guess_dict in guess_dicts:
@@ -188,7 +193,7 @@ class PPODataset(Dataset):
                                 # duplicate guesses exist in previous code
                                 sign: bool = (
                                     guess_dict["tgt_role"]
-                                    == roles[guess_dict["tgt_player"]]
+                                    == roles[guess_dict["tgt_player"]][1]
                                 )
                                 out_data.append(
                                     (
@@ -212,27 +217,25 @@ class PPODataset(Dataset):
                     for src_player_i, belief_dict in belief_round.items():
                         # [output, prompt, src_player:int, tgt_player:int]
                         tgt_player: int = belief_dict["tgt_player"]
-                        tgt_role: str = roles[int(tgt_player)]
-                        src_role: str = roles[int(src_player_i)]
+                        tgt_role: Tuple[int, str, bool] = roles[
+                            int(tgt_player)
+                        ]
+                        src_role: Tuple[int, str, bool] = roles[
+                            int(src_player_i)
+                        ]
                         to_guess_role: str = belief_dict["tgt_role"]
-                        if src_role == "Servant" and tgt_role == "Merlin":
-                            if to_guess_role == "Servant":
-                                gold_score = 10
-                            else:
-                                gold_score = 1
-                        elif src_role in [
-                            "Minion",
-                            "Assassin",
-                        ] and tgt_role in [
-                            "Minion",
-                            "Assassin",
-                            "Merlin",
-                        ]:
-                            if to_guess_role in ["Minion", "Assassin"]:
-                                gold_score = 10
-                            else:
-                                gold_score = 1
+                        if src_role[2] and tgt_role[1] == "Merlin":
+                            # Merlin's belief on good team member
+                            gold_score = 10 if to_guess_role == src_role else 1
+                        elif not src_role[2] and (
+                            not tgt_role[2] or tgt_role[1] == "Merlin"
+                        ):
+                            # Evil player/Merlin's belief on evil player
+                            gold_score = (
+                                10 if to_guess_role in evil_roles else 1
+                            )
                         else:
+                            # Rely on role guess
                             guesses = []
                             for role_guess in row["role_guess"][round_i][
                                 tgt_player
@@ -250,10 +253,6 @@ class PPODataset(Dataset):
                                     f"`gold_score` not provided in role_guess. Player {tgt_player} only guesses Player {guesses}'s role, but not {src_player_i}."
                                 )
 
-                        sign: bool = (
-                            belief_dict["tgt_role"]
-                            == roles[belief_dict["tgt_player"]]
-                        )
                         out_data.append(
                             (
                                 belief_dict["prompt"],
@@ -271,7 +270,7 @@ class PPODataset(Dataset):
                             )
                         )
             # summaries
-            for sum_round in row["summaries"]:
+            for round_i, sum_round in enumerate(row["summaries"]):
                 for player_i, sum_dict in sum_round.items():
                     # ["prompt", "resp"]
                     out_data.append(
@@ -321,9 +320,8 @@ class PPODataset(Dataset):
             response_tensors.append(response_tensor)
             reward_tensors.append(reward_tensor)
 
-        if n_samples < 0:
-            global_bz = mini_batch_size * grad_accum
-            n_samples = (len(prompt_tensors) // global_bz) * global_bz
+        global_bz = mini_batch_size * grad_accum
+        n_samples = (len(prompt_tensors) // global_bz) * global_bz
         self.prompt_tensors = prompt_tensors[:n_samples]
         self.response_tensors = response_tensors[:n_samples]
         self.reward_tensors = reward_tensors[:n_samples]
@@ -676,34 +674,36 @@ def main(
     run_name,
     lora_path: str = None,
     lora_config: Dict[str, Any] = None,
+    lr: float = 1e-5,
     mini_batch_size: int = 1,
     loglikelihood_batch_size: int = 1,  # usually n_device * mini_bz
     grad_accum: int = 32,
     n_epochs: int = 4,
-    n_samples: int = -1,  # -1 means all.
+    n_games: int = -1,  # -1 means all.
     include_guess_role: bool = False,
     include_guess_belief: bool = False,
     save_path: str = "saves/avalon_ppo",
     debug: bool = False,
 ):
-    model, model_ref = get_model(
-        model_name, lora_path=lora_path, lora_config=lora_config
-    )
+
     tokenizer = get_tokenizer(model_name)
     if debug:
-        dataset = DebugDataset(n_samples=n_samples)
+        dataset = DebugDataset(n_samples=n_games * 4)
     else:
         dataset = PPODataset(
             filename,
             mini_batch_size=mini_batch_size,
             grad_accum=grad_accum,
-            n_samples=n_samples,
+            n_games=n_games,
             tokenizer=tokenizer,
             include_guess_role=include_guess_role,
             include_guess_belief=include_guess_belief,
         )
-
+    print(f"Number of training samples: {len(dataset)}")
     # create a ppo trainer
+    model, model_ref = get_model(
+        model_name, lora_path=lora_path, lora_config=lora_config
+    )
     trainable_params, all_param = count_parameters(model)
     print(
         "trainable params: {:d} || all params: {:d} || trainable%: {:.4f}".format(
@@ -719,6 +719,7 @@ def main(
         tracker_project_name="avalon",
         tracker_kwargs={"wandb": {"name": run_name}},
         log_with="wandb",
+        learning_rate=lr,
     )
     if accelerator.distributed_type == "DEEPSPEED":
         accelerator.state.deepspeed_plugin.deepspeed_config[
