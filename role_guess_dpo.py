@@ -54,6 +54,10 @@ def main(
     max_tokens: int = 512,
     n_gpus: int = 1,
     max_trial: int = 10,
+    seed_global: bool = False,
+    use_summary: bool = True,
+    include_prev_disc: bool = True,
+    n_games: int = -1,
 ):
     logger = get_logger(
         __name__,
@@ -63,11 +67,15 @@ def main(
 
     reqs = []
     data = [json.loads(row) for row in open(in_fn)]
+    if n_games > 0:
+        data = data[:n_games]
     agent = VllmAgent(
         chat_template=get_conv_template("llama-3"),
         add_strategy_in_prompt=False,
-        use_summary=True,
+        use_summary=use_summary,
         max_trials=100,
+        seed=seed,
+        include_prev_disc=include_prev_disc,
     )
     for game_i, history in enumerate(data):
         for round_i in range(len(history["leaders"])):
@@ -75,70 +83,62 @@ def main(
                 role_name = role[1]
                 if role_name == "Merlin":
                     continue
-                elif role[2]:  # Good player
-                    # randomly pick another player
-                    # choose all roles
-                    tgt_roles = [
-                        "Percival",
-                        "Servant",
-                        "Servant",
-                        "Morgana",
-                        "Assassin",
-                        "Merlin",
-                    ]
-                    tgt_roles.pop(tgt_roles.index(role_name))
-                    tgt_roles = set(tgt_roles)
-                    new_history = {
-                        "leaders": history["leaders"][: round_i + 1],
-                        "team_discs": history["team_discs"][: round_i + 1],
-                        "team_props": history["team_props"][:round_i],
-                        "team_votes": history["team_votes"][:round_i],
-                        "quest_votes": history["quest_votes"][:round_i],
-                        "role_guess": history["role_guess"][:round_i],
-                        "role_belief": history["role_belief"][:round_i],
-                        "summaries": history["summaries"][:round_i],
-                        "assassin": history["assassin"],
-                        "roles": history["roles"],
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "n_error": 0,
-                        "id": history["id"],
-                    }
-                    req = Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=game_i,
-                        player_idx=player_idx,
-                        round_idx=round_i,
-                        history=new_history,
-                        status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                    )
-                    prompts, status = agent.guess_role_dpo_wo_env(
-                        req=req,
-                        to_guess_multiple_player=False,
-                    )
-                    req.prompt = prompts[0]
-                    req.status = status
-                    req.buffer["is_dpo"] = False
-                    reqs.append(req)
-                    dpo_req = Request(
-                        prompt=prompts[1],
-                        resp=None,
-                        game_idx=game_i,
-                        player_idx=player_idx,
-                        round_idx=round_i,
-                        history=new_history,
-                        status=status,
-                        buffer={k: v for k, v in req.buffer.items()},
-                    )
-                    dpo_req.buffer["is_dpo"] = True
-                    reqs.append(dpo_req)
-    model = LLM(model=model_name, dtype="float16", tensor_parallel_size=n_gpus)
+                new_history = {
+                    "leaders": history["leaders"][: round_i + 1],
+                    "team_discs": history["team_discs"][: round_i + 1],
+                    "team_props": history["team_props"][:round_i],
+                    "team_votes": history["team_votes"][:round_i],
+                    "quest_votes": history["quest_votes"][:round_i],
+                    "role_guess": history["role_guess"][:round_i],
+                    "role_belief": history["role_belief"][:round_i],
+                    "summaries": history["summaries"][:round_i],
+                    "assassin": history["assassin"],
+                    "roles": history["roles"],
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "n_error": 0,
+                    "id": history["id"],
+                }
+                req = Request(
+                    prompt=None,
+                    resp=None,
+                    game_idx=game_i,
+                    player_idx=player_idx,
+                    round_idx=round_i,
+                    history=new_history,
+                    status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                )
+                prompts, status = agent.guess_role_dpo_wo_env(
+                    req=req,
+                    to_guess_multiple_player=False,
+                )
+                req.prompt = prompts[0]
+                req.status = status
+                req.buffer["is_dpo"] = False
+                reqs.append(req)
+                dpo_req = Request(
+                    prompt=prompts[1],
+                    resp=None,
+                    game_idx=game_i,
+                    player_idx=player_idx,
+                    round_idx=round_i,
+                    history=new_history,
+                    status=status,
+                    buffer={k: v for k, v in req.buffer.items()},
+                )
+                dpo_req.buffer["is_dpo"] = True
+                reqs.append(dpo_req)
+    model = LLM(
+        model=model_name,
+        dtype="float16",
+        tensor_parallel_size=n_gpus,
+        seed=seed if seed_global else 0,
+    )
     sampling_params = SamplingParams(
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,
-        seed=seed,
+        seed=seed if not seed_global else None,
     )
     resps = model.generate(
         [req.prompt for req in reqs],
@@ -186,6 +186,7 @@ def main(
                         "tgt_real_role": req.history["roles"][
                             req.buffer["tgt_player_i"]
                         ][1],
+                        "src_role": req.history["roles"][req.player_idx][1],
                         "prompt": prompt,
                     }
                 else:

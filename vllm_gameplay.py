@@ -1051,6 +1051,7 @@ def main(
     to_guess_belief: bool = False,
     use_summary: bool = False,
     n_gpus: int = 1,
+    seed_global: bool = False,
 ):
     """_summary_
 
@@ -1153,13 +1154,16 @@ def main(
         from vllm import LLM, SamplingParams
 
         model = LLM(
-            model=model_name, dtype="float16", tensor_parallel_size=n_gpus
+            model=model_name,
+            dtype="float16",
+            tensor_parallel_size=n_gpus,
+            seed=seed if seed_global else 0,
         )
         sampling_params = SamplingParams(
             temperature=temperature,
             top_p=top_p,
             max_tokens=max_tokens,
-            seed=seed,
+            seed=seed if not seed_global else None,
         )
     else:
         assert (

@@ -54,6 +54,10 @@ def main(
     max_tokens: int = 512,
     n_gpus: int = 1,
     max_trial: int = 10,
+    seed_global: bool = False,
+    use_summary: bool = True,
+    include_prev_disc: bool = True,
+    n_games: int = -1,
 ):
     seeder = random.Random(seed)
     logger = get_logger(
@@ -65,6 +69,8 @@ def main(
 
     reqs = []
     data = [json.loads(row) for row in open(in_fn)]
+    if n_games > 0:
+        data = data[:n_games]
     for game_i, history in enumerate(data):
         for round_i in range(len(history["leaders"])):
             for player_idx, role in enumerate(history["roles"]):
@@ -125,15 +131,22 @@ def main(
     agent = VllmAgent(
         chat_template=get_conv_template("llama-3"),
         add_strategy_in_prompt=False,
-        use_summary=True,
         max_trials=100,
+        seed=seed,
+        use_summary=use_summary,
+        include_prev_disc=include_prev_disc,
     )
-    model = LLM(model=model_name, dtype="float16", tensor_parallel_size=n_gpus)
+    model = LLM(
+        model=model_name,
+        dtype="float16",
+        tensor_parallel_size=n_gpus,
+        seed=seed if seed_global else 0,
+    )
     sampling_params = SamplingParams(
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,
-        seed=seed,
+        seed=seed if not seed_global else None,
     )
     res = {}
     while reqs:
@@ -150,6 +163,9 @@ def main(
                     "score": int(req.resp["score"]),
                     "tgt_player_i": req.tgt_player_i,
                     "tgt_real_role": req.history["roles"][req.tgt_player_i][1],
+                    "src_role": req.history["roles"][req.player_idx][1],
+                    "prompt": prompt,
+                    "output": req.resp,
                 }
             elif req.buffer["trial"] < max_trial:
                 # create another req
@@ -201,7 +217,7 @@ def main(
             req.resp = resp.outputs[0].text
 
     # get the predicted role and calculate acc
-    seeder = random.Random(123)
+    seeder = random.Random(seed)
     acc = []
     for game_idx, players in res.items():
         for player_idx, rounds in players.items():

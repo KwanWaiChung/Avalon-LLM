@@ -62,7 +62,7 @@ class VllmAgent:
         """
         self.chat_template = chat_template
         self.seed = seed
-        self.seeder = random.Random(111)
+        self.seeder = random.Random(seed)
         self.add_strategy_in_prompt = add_strategy_in_prompt
         self.add_quest_strategy_in_prompt = add_quest_strategy_in_prompt
         self.use_summary = use_summary
@@ -157,7 +157,6 @@ class VllmAgent:
                         f"Maximum number of trials ({self.max_trials}) reached for json parsing. Restart the prompt."
                     )
                     req.buffer["msg"] = req.buffer["msg"][:1]
-                    prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     req.buffer["trial"] = 0
                     prompt = self._get_prompt_from_msg(req.buffer["msg"])
                     return prompt, RequestStatus.TEAM_VOTE_CHECK_ERROR
@@ -400,7 +399,7 @@ class VllmAgent:
                 )
                 + "\n\n"
                 + ASSASSINATION_PROMPT.replace(
-                    "{max_player_id}", str(num_players)
+                    "{max_player_id}", str(num_players - 1)
                 )
             )
             req.buffer["msg"] = [
@@ -886,12 +885,13 @@ class VllmAgent:
                     LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
+                    n_players = len(req.env.get_roles())
                     messages.append(
                         {
                             "role": "user",
                             "content": PROPOSE_TEAM_INVALID_PLAYER_PROMPT.replace(
                                 "{max_player_id}",
-                                "4",
+                                f"{n_players-1}",
                             ),
                         }
                     )
@@ -1428,7 +1428,8 @@ class VllmAgent:
                             )
                         err_msg = "Your response should provide an integer score from 1 to 10."
                         LOGGER.debug(
-                            err_msg + f" Received: {req.resp}. Trial: {req.buffer['trial']}"
+                            err_msg
+                            + f" Received: {req.resp}. Trial: {req.buffer['trial']}"
                         )
                         messages = req.buffer["msg"]
                         messages.append(
