@@ -122,24 +122,26 @@ class VllmStrategyWrapper:
 class RequestProcessor:
     def __init__(
         self,
-        agent: VllmAgent,
+        agents: List[Tuple[str, VllmAgent]],
         to_discuss: bool,  # game arguments
         add_strategy_in_prompt: bool,
         to_guess_role: bool,
         to_guess_multiple_player_role: bool,
         n_guess_role_repeat: int,
         to_guess_belief: bool,
-        use_summary: bool,
+        use_summary: Union[bool, List[bool]],
         logger=None,
     ):
-        self.agent = agent
+        self.agents = {name: agent for name, agent in agents}
         self.to_discuss = to_discuss
         self.add_strategy_in_prompt = add_strategy_in_prompt
         self.to_guess_role = to_guess_role
         self.to_guess_multiple_player_role = to_guess_multiple_player_role
         self.n_guess_role_repeat = n_guess_role_repeat
         self.to_guess_belief = to_guess_belief
-        self.use_summary = use_summary
+        self.use_summary = (
+            use_summary if isinstance(use_summary, list) else [use_summary]
+        )
         self.logger = logger
         self.n_finished_games = 0
 
@@ -187,19 +189,37 @@ class RequestProcessor:
         ), f"Number of non-none quest votes should equal to number of sucessed team in game {req.game_idx}"
 
         # summaries check
-        if self.use_summary:
+        # if self.use_summary:
+        #     assert (
+        #         len(req.history["summaries"]) == n_rounds
+        #     ), f"Should have same number of summaries as number of rounds in game {req.game_idx}."
+        #     for summary in req.history["summaries"]:
+        #         assert (
+        #             len(summary) == n_player
+        #         ), f"Should have {n_player} summaries at each round."
+        #         for p_summary in summary.values():
+        #             for k in ["prompt", "resp"]:
+        #                 assert (
+        #                     k in p_summary
+        #                 ), f"Should have key `{k}` in summary but received {p_summary} in game {req.game_idx}."
+
+        if any(self.use_summary):
             assert (
                 len(req.history["summaries"]) == n_rounds
             ), f"Should have same number of summaries as number of rounds in game {req.game_idx}."
-            for summary in req.history["summaries"]:
-                assert (
-                    len(summary) == n_player
-                ), f"Should have {n_player} summaries at each round."
-                for p_summary in summary.values():
-                    for k in ["prompt", "resp"]:
+            for round_idx, summary in enumerate(req.history["summaries"]):
+                for player_idx, p_summary in summary.items():
+                    player_model = req.history["models"][int(player_idx)]
+                    player_agent = self.agents[player_model]
+                    if player_agent.use_summary:
+                        for k in ["prompt", "resp"]:
+                            assert (
+                                k in p_summary
+                            ) == player_agent.use_summary, f"Should {'have' if player_agent.use_summary else 'not have'} key `{k}` in summary but received {p_summary} for player {player_idx} in round {round_idx} of game {req.game_idx}."
+                    else:
                         assert (
-                            k in p_summary
-                        ), f"Should have key `{k}` in summary but received {p_summary} in game {req.game_idx}."
+                            p_summary is None
+                        ), f"Player {player_idx} should not have a summary in round {round_idx} of game {req.game_idx} as their model doesn't use summaries."
 
         # role guess check
         if self.to_guess_role:
@@ -328,6 +348,9 @@ class RequestProcessor:
         self.phase_check(req.status, phase)
         n_round = len(req.history["leaders"])
         n_player = self._get_num_players(req)
+        current_model = req.history["models"][req.player_idx]
+        current_agent = self.agents[current_model]
+        use_summary = current_agent.use_summary
 
         if req.status in [
             RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
@@ -353,7 +376,10 @@ class RequestProcessor:
                         req_queue=req_queue,
                     )
                 return
-            if self.logger and req.status == RequestStatus:
+            if (
+                self.logger
+                and req.status == RequestStatus.TEAM_DISCUSSION_GET_PROMPT
+            ):
                 self.logger.info(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Team discussion phase, the leader is Player {req.history['leaders'][-1]}, current player is Player {req.player_idx}."
                 )
@@ -364,7 +390,7 @@ class RequestProcessor:
                 raise ValueError(
                     f"status = {req.status} but team discussion is done for game {req.game_idx} round {n_round-1}."
                 )
-            prompt, status = self.agent.team_discussion(req)
+            prompt, status = current_agent.team_discussion(req)
             if status == RequestStatus.TEAM_DISCUSSION_SUCCEED:
                 resp = req.resp
                 req.history["team_discs"][n_round - 1][player_id] = resp
@@ -472,7 +498,7 @@ class RequestProcessor:
                 )
                 return
 
-            prompt, status = self.agent.guess_role(
+            prompt, status = current_agent.guess_role(
                 req,
                 to_guess_multiple_player=self.to_guess_multiple_player_role,
             )
@@ -569,7 +595,7 @@ class RequestProcessor:
                     f"status = {req.status} but role_belief is done."
                 )
 
-            prompt, status = self.agent.guess_belief(req)
+            prompt, status = current_agent.guess_belief(req)
             if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
                 role = req.env.get_role(req.player_idx)[1]
                 tgt_role: str = req.env.get_role(req.buffer["tgt_player_i"])[1]
@@ -666,7 +692,7 @@ class RequestProcessor:
             RequestStatus.SUMMARIZE_GET_PROMPT,
             RequestStatus.SUMMARIZE_CHECK_ERROR,
         ]:
-            if not self.use_summary:
+            if not use_summary:
                 if self.logger:
                     self.logger.debug(
                         f"`use_summary` is not specified, routing request to `team_proposal`. {req}"
@@ -696,7 +722,7 @@ class RequestProcessor:
                     f"status = {req.status} but summarize is done."
                 )
 
-            prompt, status = self.agent.summarize(req)
+            prompt, status = current_agent.summarize(req)
             if status == RequestStatus.SUMMARIZE_SUCCEED:
                 resp = req.resp
                 req.history["summaries"][n_round - 1][req.player_idx] = {
@@ -705,7 +731,14 @@ class RequestProcessor:
                     "init_resp": req.buffer["init_resp"],
                 }
                 # need to wait all finish summarizing.
-                if len(req.history["summaries"][n_round - 1]) == n_player:
+                n_total_summaries = sum(
+                    self.agents[model].use_summary
+                    for model in req.history["models"]
+                )
+                if (
+                    len(req.history["summaries"][n_round - 1])
+                    == n_total_summaries
+                ):
                     leader: int = req.history["leaders"][-1]
                     self.process_req(
                         req=Request(
@@ -740,6 +773,13 @@ class RequestProcessor:
             RequestStatus.TEAM_PROPOSAL_GET_PROMPT,
             RequestStatus.TEAM_PROPOSAL_CHECK_ERROR,
         ]:
+            if n_round == len(req.history["team_props"]):
+                if self.logger:
+                    self.logger.debug(
+                        f"The team {req.history['team_props'][n_round-1]['team']} has been proposed for round {n_round}. This request will be omitted."
+                    )
+                return
+
             leader: int = req.history["leaders"][-1]
             if req.player_idx != leader:
                 if self.logger:
@@ -751,12 +791,12 @@ class RequestProcessor:
                 self.logger.info(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Team proposal phase. Current player is Player {req.player_idx}."
                 )
-            prompt, status = self.agent.propose_team(req)
+            prompt, status = current_agent.propose_team(req)
             if status == RequestStatus.TEAM_PROPOSAL_SUCCEED:
                 resp: Dict[str, str] = req.resp
                 if self.logger:
                     self.logger.info(
-                        f"Game number: {req.game_idx}.  Round: {n_round}. Round: {req.env.turn+1}. Team selection phase, the leader, Player {leader}, selected the team {resp['team']}."
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Team selection phase, the leader, Player {leader}, selected the team {resp['team']}."
                     )
                 req.history["team_props"].append(resp)
                 req.env.choose_quest_team(
@@ -803,10 +843,11 @@ class RequestProcessor:
             if self.logger:
                 leader: int = req.history["leaders"][-1]
                 team = req.env.get_current_quest_team()
-                self.logger.info(
-                    f"Game number: {req.game_idx}.  Round: {n_round}. Team vote phase, Player {req.player_idx} voting on team {team} chosen by {leader}."
-                )
-            prompt, status = self.agent.vote_on_team(req)
+                if req.status == RequestStatus.TEAM_VOTE_GET_PROMPT:
+                    self.logger.info(
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Team vote phase, Player {req.player_idx} voting on team {team} chosen by {leader}."
+                    )
+            prompt, status = current_agent.vote_on_team(req)
             if status == RequestStatus.TEAM_VOTE_SUCCEED:
                 # `rationale` (str): The rationale for the vote.
                 # `vote` (bool): The outcome of the vote
@@ -899,7 +940,7 @@ class RequestProcessor:
                 self.logger.info(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Quest vote phase, Player {req.player_idx} voting."
                 )
-            prompt, status = self.agent.vote_on_mission(req)
+            prompt, status = current_agent.vote_on_mission(req)
             if status == RequestStatus.QUEST_VOTE_SUCCEED:
                 # `rationale` (str): The rationale for the vote.
                 # `vote` (bool): The outcome of the vote
@@ -991,7 +1032,7 @@ class RequestProcessor:
                 self.logger.info(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Assassin phase, Player {req.player_idx} is choosing."
                 )
-            prompt, status = self.agent.assassinate(req)
+            prompt, status = current_agent.assassinate(req)
             if status == RequestStatus.ASSASSIN_VOTE_SUCCEED:
                 resp: Dict[str, str] = req.resp
                 # (next phase, game is done, good wins?)
@@ -1049,8 +1090,8 @@ def main(
     to_guess_role: bool = False,
     to_guess_multiple_player_role: bool = False,
     to_guess_belief: bool = False,
-    use_summary: bool = False,
-    include_prev_disc: bool = True,
+    use_summary: Union[bool, List[bool]] = False,
+    include_prev_disc: Union[bool, List[bool]] = True,
     n_gpus: int = 1,
     seed_global: bool = False,
 ):
@@ -1102,25 +1143,53 @@ def main(
     # init
     reqs = []
     if DEBUG or inference_strategy == "local":
-        # model = VllmWrapper(
-        #     strategy=AnyscaleInferenceStrategy(), model_name=model_name
-        # )
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            device_map="auto",
-            torch_dtype=torch.float16,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = VllmStrategyWrapper(
-            strategy=LocalInferenceStrategy(
-                model=model,
-                tokenizer=tokenizer,
-                chat_template=get_conv_template("llama-3"),
-            ),
-            model_name=model_name,
-            end_tokens=[tokenizer.eos_token],
-        )
+        if model_name is not None:
+            # model = VllmWrapper(
+            #     strategy=AnyscaleInferenceStrategy(), model_name=model_name
+            # )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                device_map="auto",
+                torch_dtype=torch.float16,
+            )
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model = VllmStrategyWrapper(
+                strategy=LocalInferenceStrategy(
+                    model=model,
+                    tokenizer=tokenizer,
+                    chat_template=get_conv_template("llama-3"),
+                ),
+                model_name=model_name,
+                end_tokens=[tokenizer.eos_token],
+            )
+        else:
+            logger.warning(
+                "Using multiple models with local models are supposed only for debugging purpose."
+            )
+            if not DEBUG:
+                raise ValueError(
+                    "Using multiple models with local models are only allowed with `DEBUG`."
+                )
+            models = []
+            for i, (_, model_path, port) in enumerate(model_names):
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    torch_dtype=torch.float16,
+                )
+                tokenizer = AutoTokenizer.from_pretrained(model_path)
+                model = VllmStrategyWrapper(
+                    strategy=LocalInferenceStrategy(
+                        model=model,
+                        tokenizer=tokenizer,
+                        chat_template=get_conv_template("llama-3"),
+                    ),
+                    model_name=model_path,  # doesn't matter
+                    end_tokens=[tokenizer.eos_token],
+                )
+                models.append(model)
         sampling_params = SamplingParamsWrapper(
             temperature=temperature, top_p=top_p, max_tokens=max_tokens
         )
@@ -1171,15 +1240,37 @@ def main(
             inference_strategy == "vllm"
         ), "Multiple models are only avilable with vllm."
 
-    agent = VllmAgent(
-        add_strategy_in_prompt=add_strategy_in_prompt,
-        add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
-        use_summary=use_summary,
-        include_prev_disc=include_prev_disc,
-        chat_template=get_conv_template("llama-3"),
-    )
+    agents = []
+    if model_name is not None:
+        agent = VllmAgent(
+            add_strategy_in_prompt=add_strategy_in_prompt,
+            add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
+            use_summary=use_summary,
+            include_prev_disc=include_prev_disc,
+            chat_template=get_conv_template("llama-3"),
+        )
+        agents.append((model_name, agent))
+    else:
+        for i, (_model_name, model_path, port) in enumerate(model_names):
+            agent = VllmAgent(
+                add_strategy_in_prompt=add_strategy_in_prompt,
+                add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
+                use_summary=(
+                    use_summary[i]
+                    if isinstance(use_summary, list)
+                    else use_summary
+                ),
+                include_prev_disc=(
+                    include_prev_disc[i]
+                    if isinstance(include_prev_disc, list)
+                    else include_prev_disc
+                ),
+                chat_template=get_conv_template("llama-3"),
+            )
+            agents.append((_model_name, agent))
+
     req_processor = RequestProcessor(
-        agent=agent,
+        agents=agents,
         to_discuss=to_discuss,
         add_strategy_in_prompt=add_strategy_in_prompt,
         to_guess_role=to_guess_role,
@@ -1190,7 +1281,10 @@ def main(
         logger=logger,
     )
     histories = []
-    config = AvalonBasicConfig.from_num_players(6, percival=True, morgana=True)
+    n_players = 6
+    config = AvalonBasicConfig.from_num_players(
+        n_players, percival=True, morgana=True
+    )
     # n_game = 50, game_batch_size = 20,
     # range(1, 21), range(21, 41), range(41, 51)
     for start_game_i in range(1, n_games + 1, game_batch_size):
@@ -1257,6 +1351,7 @@ def main(
                     )
                     histories.append(new_history)
             else:
+                history["models"] = [model_name] * n_players
                 histories.append(history)
                 # (prompt, resp, game idx, history, env, status, buffer)
                 # buffer mainly for storing temporary messages.
@@ -1293,9 +1388,8 @@ def main(
                     sampling_params=sampling_params,
                     # use_tqdm=False,
                 )
-            else:
+            else:  # multiple models
                 args = []
-                p = Pool(500)
                 for req in reqs:
                     for model_i in range(2):
                         if (
@@ -1312,17 +1406,33 @@ def main(
                                     f"http://localhost:{model_names[model_i][2]}/v1",
                                 )
                             )
-                outputs = p.starmap(wrapper, args)
-                resps = [
-                    RequestOutput(
-                        prompt=req.prompt,
-                        outputs=[output["output"]],
-                        prompt_len=output["prompt_len"],
-                        output_len=output["output_len"],
-                    )
-                    for req, output in zip(reqs, outputs)
-                ]
-                p.close()
+                if DEBUG:
+                    resps = []
+                    for req in reqs:
+                        for model_i in range(2):
+                            if (
+                                req.history["models"][req.player_idx]
+                                == model_names[model_i][0]
+                            ):
+                                resp = model.generate(
+                                    [req.prompt],
+                                    sampling_params=sampling_params,
+                                    # use_tqdm=False,
+                                )
+                                resps += resp
+                else:
+                    p = Pool(500)
+                    outputs = p.starmap(wrapper, args)
+                    resps = [
+                        RequestOutput(
+                            prompt=req.prompt,
+                            outputs=[output["output"]],
+                            prompt_len=output["prompt_len"],
+                            output_len=output["output_len"],
+                        )
+                        for req, output in zip(reqs, outputs)
+                    ]
+                    p.close()
 
             for req, resp in zip(reqs, resps):
                 req.resp = resp.outputs[0].text

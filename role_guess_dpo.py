@@ -144,14 +144,14 @@ def main(
         [req.prompt for req in reqs],
         sampling_params=sampling_params,
     )
-    #  # debug
+    # #  # debug
     # resps = [
     #     RequestOutput(
     #         prompt=req.prompt,
     #         outputs=[
     #             json.dumps(
     #                 {
-    #                     "score": seeder.randint(1, 10),
+    #                     "score": random.randint(1, 10),
     #                     "rationale": "some rationale",
     #                 }
     #             )
@@ -173,14 +173,14 @@ def main(
                 to_guess_multiple_player=False,
             )
             if status == RequestStatus.ROLE_GUESS_SUCCEED:
+                output_row = (
+                    res.setdefault(req.game_idx, {})
+                    .setdefault(req.round_idx, {})
+                    .setdefault(req.player_idx, {})
+                    .setdefault(req.buffer["tgt_role"], {})
+                )
                 if not req.buffer["is_dpo"]:
-                    res.setdefault(req.game_idx, {}).setdefault(
-                        req.player_idx, {}
-                    ).setdefault(req.round_idx, {}).setdefault(
-                        req.buffer["tgt_role"], {}
-                    )[
-                        "normal"
-                    ] = {
+                    output_row["normal"] = {
                         "resp": req.resp,
                         "tgt_player_i": req.buffer["tgt_player_i"],
                         "tgt_real_role": req.history["roles"][
@@ -190,13 +190,7 @@ def main(
                         "prompt": prompt,
                     }
                 else:
-                    res.setdefault(req.game_idx, {}).setdefault(
-                        req.player_idx, {}
-                    ).setdefault(req.round_idx, {}).setdefault(
-                        req.buffer["tgt_role"], {}
-                    )[
-                        "dpo"
-                    ] = {
+                    output_row["dpo"] = {
                         "resp": req.resp,
                         "tgt_player_i": req.buffer["tgt_player_i"],
                         "tgt_real_role": req.history["roles"][
@@ -237,7 +231,7 @@ def main(
         #         outputs=[
         #             json.dumps(
         #                 {
-        #                     "score": seeder.randint(1, 10),
+        #                     "score": random.randint(1, 10),
         #                     "rationale": "some rationale",
         #                 }
         #             )

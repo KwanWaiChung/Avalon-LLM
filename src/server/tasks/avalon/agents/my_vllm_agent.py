@@ -1215,7 +1215,7 @@ class VllmAgent:
                     prompt = req.buffer["prompt"][0]
                 return prompt, RequestStatus.ROLE_GUESS_SUCCEED
 
-    def guess_role_wo_env(
+    def guess_role_for_eval(
         self,
         req: Request,
         to_guess_multiple_player: bool = True,
@@ -1719,20 +1719,24 @@ class VllmAgent:
                 return prompt, RequestStatus.ROLE_GUESS_SUCCEED
 
     def guess_belief(self, req: Request) -> Dict[str, Any]:
-        n_players = len(req.env.get_roles())
+        roles = req.history["roles"]
+        n_players = len(roles)
         if "tgt_player_i" in req.args:
             tgt_player_i = req.args["tgt_player_i"]
         else:
             tgt_player_i = self.seeder.choice(
                 [i for i in range(n_players) if i != req.player_idx]
             )
-        all_roles = list(set([role[1] for role in req.env.get_roles()]))
-        tgt_role = self.seeder.choice(all_roles)
+        if "tgt_role" in req.args:
+            tgt_role = req.args["tgt_role"]
+        else:
+            all_roles = list(set([role[1] for role in roles]))
+            tgt_role = self.seeder.choice(all_roles)
         if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
                 history=req.history,
-                player_list=req.env.get_roles(),
+                player_list=roles,
             )
             prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
                 "{i}", str(tgt_player_i)
