@@ -5,6 +5,8 @@ from itertools import count
 from strictfire import StrictFire
 from datetime import timedelta
 from tabulate import tabulate
+from logging.handlers import RotatingFileHandler
+import threading
 import textwrap
 import os
 import socket
@@ -17,6 +19,7 @@ import threading
 import datetime
 import logging
 import psutil
+
 
 # Add this near the top of your script, after the imports
 logging.basicConfig(
@@ -36,8 +39,10 @@ class TaskStatus(Enum):
 class Task:
     command: str
     n_gpus: int
-    priority: int
+    priority: int = 10
     output_file: str = None
+    output_file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
+    output_file_backup_count: int = 2
     task_id: str = field(init=False)
     wait_task_id: str = None
     status: TaskStatus = field(default=TaskStatus.WAITING)
@@ -121,6 +126,8 @@ class GPUTaskQueue:
         command: str,
         n_gpus: int,
         output_file: str,
+        output_file_max_bytes: int = 10 * 1024 * 1024,  # 10 MB
+        output_file_backup_count: int = 2,
         priority: int = 10,
         wait_task_id: int = None,
     ):
@@ -136,6 +143,8 @@ class GPUTaskQueue:
             command=command,
             n_gpus=n_gpus,
             output_file=output_file,
+            output_file_max_bytes=output_file_max_bytes,
+            output_file_backup_count=output_file_backup_count,
             priority=priority,
             wait_task_id=wait_task_id,
         )
@@ -210,25 +219,79 @@ class GPUTaskQueue:
                 selected_gpus = available_gpus[: task.n_gpus]
                 self._run_task(task_to_run, selected_gpus)
 
-    def _run_task(self, task, selected_gpus: List[int]):
-        """Runs a single task."""
+    def _run_task(self, task: Task, selected_gpus: List[int]):
+        """Runs a single task with output file size restriction."""
         gpu_ids_str = ",".join(map(str, selected_gpus))
         cuda_command = f"CUDA_VISIBLE_DEVICES={gpu_ids_str} {task.command}"
-        if task.output_file and (d := os.path.dirname(task.output_file)):
-            os.makedirs(d, exist_ok=True)
-        with open(task.output_file, "w") as file_:
-            process = subprocess.Popen(
-                cuda_command, stdout=file_, stderr=file_, shell=True
-            )
-            self.running_processes.append((process, task))
-            self.assigned_gpus.update(selected_gpus)
-            task.command = cuda_command
-            task.status = TaskStatus.RUNNING
-            task.assigned_gpus = selected_gpus
-            task.start_time = datetime.datetime.now()
-        logger.info(
-            f"Started task: ID={task.task_id}, Command='{cuda_command}', Assigned GPU IDs={selected_gpus}, Output file={task.output_file}."
+
+        # Set up output file and rotating file handler
+        task_logger = self._setup_output_file(task)
+
+        # Start the process
+        process = subprocess.Popen(
+            cuda_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=True,
+            universal_newlines=True,
         )
+
+        # Update task and queue information
+        self._update_task_info(task, process, selected_gpus, cuda_command)
+
+        # Start output reader thread
+        self._start_output_reader(process, task_logger)
+
+        logger.info(
+            f"Started task: ID={task.task_id}, Command='{cuda_command}', "
+            f"Assigned GPU IDs={selected_gpus}, Output file={task.output_file}."
+        )
+
+    def _setup_output_file(self, task: Task):
+        """Set up the output file and return a task-specific logger."""
+        if task.output_file:
+            if directory := os.path.dirname(task.output_file):
+                os.makedirs(directory, exist_ok=True)
+
+            # Remove the existing file if it exists
+            if os.path.exists(task.output_file):
+                os.remove(task.output_file)
+
+            rotating_handler = RotatingFileHandler(
+                task.output_file,
+                maxBytes=task.output_file_max_bytes,
+                backupCount=task.output_file_backup_count,
+            )
+
+            # Create a custom logger for the task output
+            task_logger = logging.getLogger(f"task_{task.task_id}")
+            task_logger.setLevel(logging.INFO)
+            task_logger.addHandler(rotating_handler)
+            task_logger.propagate = (
+                False  # Prevent propagation to parent loggers
+            )
+            return task_logger
+
+    def _update_task_info(
+        self, task: Task, process, selected_gpus: List[int], cuda_command: str
+    ):
+        """Update task and queue information after starting a process."""
+        self.running_processes.append((process, task))
+        self.assigned_gpus.update(selected_gpus)
+        task.command = cuda_command
+        task.status = TaskStatus.RUNNING
+        task.assigned_gpus = selected_gpus
+        task.start_time = datetime.datetime.now()
+
+    def _start_output_reader(self, process, task_logger):
+        """Start a thread to handle the process output."""
+
+        def output_reader():
+            for line in process.stdout:
+                if task_logger:
+                    task_logger.info(line.strip())
+
+        threading.Thread(target=output_reader, daemon=True).start()
 
     def monitor_and_clean(self):
         with self.lock:
@@ -483,7 +546,7 @@ def _format_td(td: timedelta) -> str:
 def add_task(
     command: str,
     n_gpus: int,
-    priority: int,
+    priority: int = 10,
     wait_task_id: int = None,
     output_file=None,
     host="localhost",
