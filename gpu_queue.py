@@ -6,6 +6,7 @@ from strictfire import StrictFire
 from datetime import timedelta
 from tabulate import tabulate
 from logging.handlers import RotatingFileHandler
+import re
 import threading
 import textwrap
 import os
@@ -33,6 +34,24 @@ class TaskStatus(Enum):
     RUNNING = "running"
     FINISHED = "finished"
     TERMINATED = "terminated"
+    DELETED = "deleted"
+
+
+class TqdmFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.last_percentage = -1
+
+    def filter(self, record):
+        if "it/s]" in record.msg:  # This is likely a tqdm output
+            match = re.search(r"(\d+)%", record.msg)
+            if match:
+                current_percentage = int(match.group(1))
+                if current_percentage != self.last_percentage:
+                    self.last_percentage = current_percentage
+                    return True
+                return False
+        return True
 
 
 @dataclass()
@@ -44,7 +63,7 @@ class Task:
     output_file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     output_file_backup_count: int = 2
     task_id: str = field(init=False)
-    wait_task_id: str = None
+    wait_task_ids: List[str] = field(default_factory=list)
     status: TaskStatus = field(default=TaskStatus.WAITING)
     submission_time: datetime.datetime = field(
         default_factory=datetime.datetime.now
@@ -52,7 +71,6 @@ class Task:
     start_time: datetime.datetime = None
     finish_time: datetime.datetime = None
     assigned_gpus: List[int] = field(default_factory=list)
-
     _id_counter = count(1)
 
     def __post_init__(self):
@@ -129,7 +147,7 @@ class GPUTaskQueue:
         output_file_max_bytes: int = 10 * 1024 * 1024,  # 10 MB
         output_file_backup_count: int = 2,
         priority: int = 10,
-        wait_task_id: int = None,
+        wait_task_ids: List[int] = [],
     ):
         """Adds a new task to the queue.
 
@@ -146,12 +164,12 @@ class GPUTaskQueue:
             output_file_max_bytes=output_file_max_bytes,
             output_file_backup_count=output_file_backup_count,
             priority=priority,
-            wait_task_id=wait_task_id,
+            wait_task_ids=wait_task_ids,
         )
         with self.lock:
             heapq.heappush(self.queue, task)
         logger.info(
-            f"Task added: ID={task.task_id}, Command='{command}', GPUs={n_gpus}, Priority={priority}, Wait Task ID={wait_task_id}"
+            f"Task added: ID={task.task_id}, Command='{command}', GPUs={n_gpus}, Priority={priority}, Wait Task IDs={wait_task_ids}"
         )
         return task
 
@@ -159,23 +177,24 @@ class GPUTaskQueue:
         waiting_tasks = [
             task
             for task in self.queue
-            if task.status == TaskStatus.WAITING
-            and task.wait_task_id is not None
+            if task.status == TaskStatus.WAITING and task.wait_task_ids
         ]
-        terminated_tasks_id = [
+        removed_tasks_id = [
             task.task_id
             for task in self.queue
-            if task.status in [TaskStatus.TERMINATED]
+            if task.status in [TaskStatus.TERMINATED, TaskStatus.DELETED]
         ]
         to_remove_tasks = []
         for task in waiting_tasks:
-            if task.wait_task_id in terminated_tasks_id:
-                to_remove_tasks.append(task)
+            for wait_task_id in task.wait_task_ids:
+                if wait_task_id in removed_tasks_id:
+                    to_remove_tasks.append((task, wait_task_id))
+                    break
 
-        for task in to_remove_tasks:
+        for task, wait_task_id in to_remove_tasks:
             self.delete_task(task.task_id)
             logger.info(
-                f"Task {task.task_id} is waiting for a terminated task {task.wait_task_id}. Thus, this task is deleted."
+                f"Task {task.task_id} is waiting for a terminated task {wait_task_id}. Thus, this task is deleted."
             )
 
     def run_tasks(self):
@@ -209,8 +228,8 @@ class GPUTaskQueue:
             ]
             for task in highest_priority_tasks:
                 if task.n_gpus <= n_available_gpus and (
-                    task.wait_task_id is None
-                    or task.wait_task_id in finished_tasks_id
+                    len(task.wait_task_ids) == 0
+                    or all(t in finished_tasks_id for t in task.wait_task_ids)
                 ):
                     task_to_run = task
                     break
@@ -262,6 +281,8 @@ class GPUTaskQueue:
                 maxBytes=task.output_file_max_bytes,
                 backupCount=task.output_file_backup_count,
             )
+            tqdm_filter = TqdmFilter()
+            rotating_handler.addFilter(tqdm_filter)
 
             # Create a custom logger for the task output
             task_logger = logging.getLogger(f"task_{task.task_id}")
@@ -341,6 +362,11 @@ class GPUTaskQueue:
                     if task.assigned_gpus
                     else "N/A"
                 )
+                wait_task_ids = (
+                    ", ".join(task.wait_task_ids)
+                    if task.wait_task_ids
+                    else "N/A"
+                )
                 # outputs.append(
                 #     f"ID: {task.task_id}, Command: {task.command}, GPUs: {task.n_gpus}, "
                 #     f"Assigned GPU IDs: {assigned_gpus}, Output File: {task.output_file}, Priority: {task.priority}, "
@@ -356,7 +382,7 @@ class GPUTaskQueue:
                         "Assigned GPU IDs": assigned_gpus,
                         "Output File": task.output_file,
                         "Priority": task.priority,
-                        "Wait Task ID": task.wait_task_id or "N/A",
+                        "Wait Task IDs": wait_task_ids,
                         "Status": task.status.value,
                         "Submitted": task.submission_time.strftime(
                             "%Y-%m-%d %H:%M:%S"
@@ -373,7 +399,7 @@ class GPUTaskQueue:
         for task in self.queue:
             if task.task_id == task_id:
                 if task.status == TaskStatus.WAITING:
-                    self.queue.remove(task)
+                    task.status = TaskStatus.DELETED
                     return True
                 elif task.status == TaskStatus.RUNNING:
                     logger.info(
@@ -407,7 +433,7 @@ class GPUTaskQueue:
                             set(task.assigned_gpus)
                         )
                         self.running_processes.remove((process, task))
-                        task.status = TaskStatus.FINISHED
+                        task.status = TaskStatus.TERMINATED
                         task.finish_time = datetime.datetime.now()
                         logger.info(
                             f"Task killed: ID={task.task_id}, Command='{task.command}'"
@@ -433,11 +459,15 @@ def handle_client(client_socket, gpu_queue):
 
             if action == "add":
                 task = gpu_queue.add_task(
-                    request["command"],
-                    request["n_gpus"],
-                    request["output_file"],
-                    request["priority"],
-                    request["wait_task_id"],
+                    command=request["command"],
+                    n_gpus=request["n_gpus"],
+                    output_file=request["output_file"],
+                    output_file_max_bytes=request["output_file_max_bytes"],
+                    output_file_backup_count=request[
+                        "output_file_backup_count"
+                    ],
+                    priority=request["priority"],
+                    wait_task_ids=request["wait_task_ids"],
                 )
                 response = {
                     "status": "success",
@@ -546,9 +576,11 @@ def _format_td(td: timedelta) -> str:
 def add_task(
     command: str,
     n_gpus: int,
+    output_file: str,
+    output_file_max_bytes: int = 10 * 1024 * 1024,  # 10 MB
+    output_file_backup_count: int = 2,
     priority: int = 10,
-    wait_task_id: int = None,
-    output_file=None,
+    wait_task_ids: List[int] = [],
     host="localhost",
     port=12345,
 ):
@@ -559,8 +591,10 @@ def add_task(
         "command": command,
         "n_gpus": n_gpus,
         "output_file": output_file,
+        "output_file_max_bytes": output_file_max_bytes,
+        "output_file_backup_count": output_file_backup_count,
         "priority": priority,
-        "wait_task_id": wait_task_id,
+        "wait_task_ids": wait_task_ids,
     }
 
     response = _send_request(host, port, request)

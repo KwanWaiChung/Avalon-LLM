@@ -2,10 +2,11 @@ import pytest
 import tempfile
 import os
 import time
-import io
 import logging
+import os
+from io import StringIO
 from unittest.mock import Mock, patch, MagicMock
-from gpu_queue import GPUTaskQueue, Task, TaskStatus
+from gpu_queue import GPUTaskQueue, Task, TaskStatus, TqdmFilter
 
 
 @pytest.fixture
@@ -210,21 +211,138 @@ def run_rotating_file_handler_test(gpu_queue, setup, num_lines):
         log_file.unlink()
 
 
-@patch("gpu_queue.MAX_OUTPUT_SIZE", 1000)  # 1KB for testing purposes
-@patch("gpu_queue.BACKUP_COUNT", 2)
 def test_rotating_file_handler_1000_lines(gpu_queue, setup_test_environment):
     run_rotating_file_handler_test(gpu_queue, setup_test_environment, 1000)
 
 
-@patch("gpu_queue.MAX_OUTPUT_SIZE", 1000)  # 1KB for testing purposes
-@patch("gpu_queue.BACKUP_COUNT", 2)
 def test_rotating_file_handler_20_lines(gpu_queue, setup_test_environment):
     run_rotating_file_handler_test(gpu_queue, setup_test_environment, 20)
 
 
-if __name__ == "__main__":
-    pytest.main(
-        "tests/test_gpu_queue.py::test_rotating_file_handler_1000_lines".split(
-            " "
-        )
+###
+
+
+def test_tqdm_filter_logging(gpu_queue, tmpdir):
+    # Setup a StringIO to capture log output
+    mock_task = Task(
+        command="echo test", n_gpus=1, output_file=tmpdir / "test_output.log"
     )
+
+    # Setup the task logger with our custom filter
+    task_logger = gpu_queue._setup_output_file(mock_task)
+
+    # Simulate tqdm output
+    tqdm_outputs = [
+        "10%|██        | 100/1000 [00:01<00:09, 98.78it/s]",
+        "10%|██        | 101/1000 [00:01<00:09, 98.80it/s]",
+        "11%|██        | 110/1000 [00:01<00:09, 98.82it/s]",
+        "20%|████      | 200/1000 [00:02<00:08, 98.85it/s]",
+    ]
+
+    # Log the tqdm outputs
+    for output in tqdm_outputs:
+        task_logger.info(output)
+
+    # Read the log file
+    with open(mock_task.output_file, "r") as f:
+        log_output = f.read().strip().split("\n")
+
+    # Check that only percentage changes were logged
+    assert len(log_output) == 3
+    assert "10%" in log_output[0]
+    assert "11%" in log_output[1]
+    assert "20%" in log_output[2]
+
+
+def test_run_tasks_with_wait_task_ids(mock_gpustat, gpu_queue):
+    mock_gpustat.return_value = [
+        {"memory.used": 0, "memory.total": 100} for _ in range(3)
+    ]
+    # Add three tasks
+    task1 = gpu_queue.add_task("task1", n_gpus=1, output_file="out1.txt")
+    task2 = gpu_queue.add_task("task2", n_gpus=1, output_file="out2.txt")
+    task3 = gpu_queue.add_task(
+        "task3",
+        n_gpus=1,
+        output_file="out3.txt",
+        wait_task_ids=[task1.task_id, task2.task_id],
+    )
+
+    # Initial run
+    for _ in range(3):
+        gpu_queue.run_tasks()
+    assert task1.status == TaskStatus.RUNNING
+    assert task2.status == TaskStatus.RUNNING
+    assert task3.status == TaskStatus.WAITING
+
+    # Set task1 to finished
+    task1.status = TaskStatus.FINISHED
+    gpu_queue.run_tasks()
+    assert task3.status == TaskStatus.WAITING
+
+    # Set task2 to finished
+    task2.status = TaskStatus.FINISHED
+    gpu_queue.run_tasks()
+    assert task3.status == TaskStatus.RUNNING
+
+
+def test_remove_deadlocks(gpu_queue):
+    # mock_gpustat.return_value = [
+    #     {"memory.used": 0, "memory.total": 100} for _ in range(3)
+    # ]
+    task1 = gpu_queue.add_task("task1", n_gpus=1, output_file="out1.txt")
+    task2 = gpu_queue.add_task("task2", n_gpus=1, output_file="out2.txt")
+    task3 = gpu_queue.add_task(
+        "task3",
+        n_gpus=1,
+        output_file="out3.txt",
+        wait_task_ids=[task1.task_id, task2.task_id],
+    )
+    task4 = gpu_queue.add_task("task4", n_gpus=1, output_file="out3.txt")
+    task5 = gpu_queue.add_task(
+        "task5",
+        n_gpus=1,
+        output_file="out3.txt",
+        wait_task_ids=[task4.task_id],
+    )
+
+    gpu_queue.remove_deadlocks()
+    waiting_tasks = [
+        task.task_id
+        for task in gpu_queue.queue
+        if task.status == TaskStatus.WAITING
+    ]
+    assert len(waiting_tasks) == 5
+
+    gpu_queue._run_task(task2, [0])
+    gpu_queue.kill_task(task2.task_id)
+    assert task2.status == TaskStatus.TERMINATED
+    waiting_tasks = [
+        task for task in gpu_queue.queue if task.status == TaskStatus.WAITING
+    ]
+    assert len(waiting_tasks) == 4
+    assert task2 not in waiting_tasks
+
+    gpu_queue.remove_deadlocks()
+    waiting_tasks = [
+        task for task in gpu_queue.queue if task.status == TaskStatus.WAITING
+    ]
+    assert len(waiting_tasks) == 3
+    assert task2 not in waiting_tasks
+    assert task3 not in waiting_tasks
+
+    gpu_queue.delete_task(task4.task_id)
+    gpu_queue.remove_deadlocks()
+    assert task4.status == TaskStatus.DELETED
+    waiting_tasks = [
+        task for task in gpu_queue.queue if task.status == TaskStatus.WAITING
+    ]
+    assert len(waiting_tasks) == 1
+    assert task2 not in waiting_tasks
+    assert task3 not in waiting_tasks
+    assert task4 not in waiting_tasks
+    assert task5 not in waiting_tasks
+
+
+if __name__ == "__main__":
+    pytest.main("tests/test_gpu_queue.py::test_remove_deadlocks".split(" "))
