@@ -6,6 +6,9 @@ from strictfire import StrictFire
 from datetime import timedelta
 from tabulate import tabulate
 from logging.handlers import RotatingFileHandler
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import smtplib
 import re
 import threading
 import textwrap
@@ -108,14 +111,65 @@ class Task:
 class GPUTaskQueue:
     """A priority queue for managing GPU tasks."""
 
-    def __init__(self, max_n_gpus: int = None):
+    def __init__(
+        self,
+        name: str = "kf05",
+        max_n_gpus: int = None,
+        email_config_fn: str = "email_config.json",
+    ):
         self.queue = []
+        self.name = name
         self.assigned_gpus = set()
         self.running_processes = []
         self.lock = threading.Lock()
         if max_n_gpus is None:
             max_n_gpus = len(gpustat.new_query())
         self.max_n_gpus = max_n_gpus
+        email_config = {}
+        if os.path.exists(email_config_fn):
+            with open(email_config_fn, "r") as f:
+                email_config = json.load(f)
+            for k in ["fromaddr", "toaddr", "password"]:
+                if k not in email_config:
+                    raise ValueError(
+                        f"`{k}` should be provided in email config."
+                    )
+            logger.info("Email config has been loaded.")
+        self.email_config = email_config
+        logger.info(f"{self.name} is ready!")
+
+    def sendEmail(self, task: Task):
+        if self.email_config:
+            fromaddr = self.email_config["fromaddr"]
+            toaddr = self.email_config["toaddr"]
+            msg = MIMEMultipart()
+            msg["From"] = fromaddr
+            msg["To"] = toaddr
+            msg["Subject"] = f"A task has finished in {self.name}."
+
+            password = self.email_config["password"]
+
+            duration = _format_td(task.finish_time - task.start_time)
+            body = ""
+            body += f"Task ID: {task.task_id}\n"
+            body += f"Command: {task.command}\n"
+            body += f"GPUs: {task.n_gpus}\n"
+            body += f"Assigned GPU IDs: {', '.join(map(str, task.assigned_gpus)) if task.assigned_gpus else 'N/A'}\n"
+            body += f"Output File: {task.output_file}\n"
+            body += f"Priority: {task.priority}\n"
+            body += f"Wait Task IDs: {', '.join(task.wait_task_ids) if task.wait_task_ids else 'N/A'}\n"
+            body += f"Status: {task.status.value}\n"
+            body += f"Submitted: {task.submission_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            body += f"Started: {task.start_time.strftime('%Y-%m-%d %H:%M:%S') if task.start_time else 'N/A'}\n"
+            body += f"Finished: {task.finish_time.strftime('%Y-%m-%d %H:%M:%S') if task.finish_time else 'N/A'}\n"
+            body += f"Duration: {duration}\n"
+            msg.attach(MIMEText(body, "plain"))
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+            server.starttls()
+            server.login(fromaddr, password)
+            text = msg.as_string()
+            server.sendmail(fromaddr, toaddr, text)
+            server.quit()
 
     def get_available_gpus(self) -> List[int]:
         """Retrieves a list of available GPU IDs.
@@ -325,6 +379,7 @@ class GPUTaskQueue:
                     f"Task completed: ID={task.task_id}, Command='{task.command}', Output file={task.output_file}, Duration={duration}."
                 )
                 task.status = TaskStatus.FINISHED
+                self.sendEmail(task)
                 self.assigned_gpus.difference_update(set(task.assigned_gpus))
                 completed_processes.append((process, task))
         # Remove completed processes from the list
@@ -646,8 +701,13 @@ def set_max_n_gpus(max_n_gpus: int, host="localhost", port=12345):
     print(f"Server response: {response['message']}")
 
 
-def run_server():
-    gpu_queue = GPUTaskQueue()
+def run_server(email_config_fn: str = None):
+    if email_config_fn is None:
+        parent_folder = os.path.abspath(os.path.dirname(__file__))
+        fn = os.path.join(parent_folder, "email_config.json")
+        if os.path.exists(fn):
+            email_config_fn = fn
+    gpu_queue = GPUTaskQueue(email_config_fn=email_config_fn)
     queue_thread = threading.Thread(target=gpu_queue.run, daemon=True)
     queue_thread.start()
     # Run the server
