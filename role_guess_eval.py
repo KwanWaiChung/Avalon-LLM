@@ -90,6 +90,7 @@ def main(
     in_fn: str,
     model_name: str,
     out_fn: str = None,
+    result_fn: str = None,
     seed: int = 111,
     temperature=0,
     top_p=1,
@@ -113,17 +114,14 @@ def main(
         console_level="debug",
         maxBytes=5e-6,
     )
-    if out_fn is not None:
-        warnings.warn(
-            "`out_fn` will be decided automatically.",
-            DeprecationWarning,
+    if out_fn is None:
+        out_fn = os.path.join(
+            ROLE_GUESS_OUTPUT_DIR, f"{model_name}_role-guess-eval.json"
         )
-    out_fn = os.path.join(
-        ROLE_GUESS_OUTPUT_DIR, f"{model_name}_role-guess-eval.json"
-    )
-    result_fn = os.path.join(
-        ROLE_GUESS_RESULT_DIR, f"{model_name}_role-guess-eval.json"
-    )
+    if result_fn is None:
+        result_fn = os.path.join(
+            ROLE_GUESS_RESULT_DIR, f"{model_name}_role-guess-eval.json"
+        )
 
     reqs = []
     data = [json.loads(row) for row in open(in_fn)]
@@ -316,6 +314,7 @@ def main(
                         "src_role": req.history["roles"][req.player_idx][1],
                         "prompt": prompt,
                         "output": req.resp,
+                        "n_error": req.history["n_error"],
                     }
                 elif req.buffer["trial"] < max_trial:
                     # create another req
@@ -361,6 +360,7 @@ def main(
                         # ][1],
                         "prompt": prompt,
                         "output": req.resp,
+                        "n_error": req.history["n_error"],
                     }
                 elif req.buffer["trial"] < max_trial:
                     # create another req
@@ -468,7 +468,6 @@ def main(
     # belief guess
     if guess_belief:
         n_samples = 0
-        role_belief_acc = []
         preds, golds = [], []
         for game_idx, players in role_belief_res.items():
             for player_idx, rounds in players.items():
@@ -529,7 +528,11 @@ def main(
     if not debug:
         os.makedirs(os.path.dirname(out_fn), exist_ok=True)
         with open(out_fn, "w") as f:
-            json.dump(role_guess_res, f, indent=4)
+            json.dump(
+                {"role_guess": role_guess_res, "role_belief": role_belief_res},
+                f,
+                indent=4,
+            )
         print(f"Output saved to {out_fn}")
 
         os.makedirs(os.path.dirname(result_fn), exist_ok=True)
