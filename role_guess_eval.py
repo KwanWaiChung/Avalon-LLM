@@ -1,6 +1,7 @@
 import random
 import json
 import os
+import warnings
 
 from strictfire import StrictFire
 from vllm_gameplay import RequestOutput
@@ -11,6 +12,44 @@ from src.server.tasks.avalon.my_prompts import GUESS_ONE_ROLE_PROMPT
 from src.utils.vllm_misc import RequestStatus
 from typing import Dict, Any
 from src.utils.logger import get_logger
+from src.utils.constants import (
+    ROLE_GUESS_RESULT_DIR,
+    MODELS,
+    ROLE_GUESS_OUTPUT_DIR,
+)
+
+
+def calculate_metrics(predictions, gold_labels):
+    true_positives = sum(
+        [p == 1 and g == 1 for p, g in zip(predictions, gold_labels)]
+    )
+    true_negatives = sum(
+        [p == 0 and g == 0 for p, g in zip(predictions, gold_labels)]
+    )
+    false_positives = sum(
+        [p == 1 and g == 0 for p, g in zip(predictions, gold_labels)]
+    )
+    false_negatives = sum(
+        [p == 0 and g == 1 for p, g in zip(predictions, gold_labels)]
+    )
+
+    precision = (
+        true_positives / (true_positives + false_positives)
+        if true_positives + false_positives > 0
+        else 0
+    )
+    recall = (
+        true_positives / (true_positives + false_negatives)
+        if true_positives + false_negatives > 0
+        else 0
+    )
+    f1 = (
+        2 * (precision * recall) / (precision + recall)
+        if precision + recall > 0
+        else 0
+    )
+    accuracy = (true_positives + true_negatives) / len(predictions)
+    return precision, recall, f1, accuracy
 
 
 class Request:
@@ -60,6 +99,7 @@ def main(
     seed_global: bool = False,
     use_summary: bool = True,
     include_prev_disc: bool = True,
+    only_servant_guess: bool = False,
     guess_belief: bool = False,
     n_games: int = -1,
     debug: bool = False,
@@ -73,17 +113,39 @@ def main(
         console_level="debug",
         maxBytes=5e-6,
     )
+    if out_fn is not None:
+        warnings.warn(
+            "`out_fn` will be decided automatically.",
+            DeprecationWarning,
+        )
+    out_fn = os.path.join(
+        ROLE_GUESS_OUTPUT_DIR, f"{model_name}_role-guess-eval.json"
+    )
+    result_fn = os.path.join(
+        ROLE_GUESS_RESULT_DIR, f"{model_name}_role-guess-eval.json"
+    )
 
     reqs = []
     data = [json.loads(row) for row in open(in_fn)]
     if n_games > 0:
         data = data[:n_games]
     for game_i, history in enumerate(data):
+        servant_ids = [
+            i
+            for i, role in enumerate(history["roles"])
+            if role[1] == "Servant"
+        ]
         for round_i in range(len(history["leaders"])):
             # tgt -> [src]
             tgt2src = {}
+            src_player_i = seeder.choice(servant_ids)
             for player_idx, role in enumerate(history["roles"]):
                 role_name = role[1]
+                if role_name == "Merlin" or (
+                    only_servant_guess and player_idx != src_player_i
+                ):
+                    continue
+
                 tgt_player_i = seeder.choice(
                     [
                         i
@@ -91,9 +153,7 @@ def main(
                         if i != player_idx
                     ]
                 )
-                if role_name == "Merlin":
-                    continue
-                elif role[2]:  # Good player
+                if role[2]:  # Good player
                     # randomly pick another player
                     # choose all roles
                     tgt_roles = [
@@ -210,7 +270,7 @@ def main(
                     #     tgt_player_i = seeder.choice(list(available_idxs))
 
     agent = VllmAgent(
-        chat_template=get_conv_template("llama-3"),
+        chat_template=get_conv_template(MODELS[model_name]["template"]),
         add_strategy_in_prompt=False,
         max_trials=100,
         seed=seed,
@@ -218,8 +278,9 @@ def main(
         include_prev_disc=include_prev_disc,
     )
     if not debug:
+        model_path = MODELS[model_name]["path"]
         model = LLM(
-            model=model_name,
+            model=model_path,
             dtype="float16",
             tensor_parallel_size=n_gpus,
             seed=seed if seed_global else 0,
@@ -357,57 +418,124 @@ def main(
     role_belief_acc = []
     # role guess
     n_samples = 0
+    evil_roles = [role[1] for role in data[0]["roles"] if not role[2]]
+    preds, golds = [], []
     for game_idx, players in role_guess_res.items():
         for player_idx, rounds in players.items():
             for round_idx, tgt_roles in rounds.items():
-                max_score = max(score["score"] for score in tgt_roles.values())
-                max_roles = [
-                    key
-                    for key, value in tgt_roles.items()
-                    if value["score"] == max_score
-                ]
-                max_role = seeder.choice(max_roles)
-                tgt_roles["pred_role"] = max_role
-                role_belief_acc.append(
-                    max_role == tgt_roles[max_role]["tgt_real_role"]
-                )
+                good_score = 0
+                evil_score = 0
+                gold = None
+                for role, score in tgt_roles.items():
+                    if role in evil_roles:
+                        evil_score += score["score"]
+                    else:
+                        good_score += score["score"]
+                    gold = score["tgt_real_role"] in evil_roles
+                pred = evil_score > good_score
+                tgt_roles["pred"] = pred
+                tgt_roles["gold"] = gold
+                preds.append(pred)
+                golds.append(gold)
+                # max_score = max(score["score"] for score in tgt_roles.values())
+                # max_roles = [
+                #     key
+                #     for key, value in tgt_roles.items()
+                #     if value["score"] == max_score
+                # ]
+                # max_role = seeder.choice(max_roles)
+                # tgt_roles["pred_role"] = max_role
+                # role_belief_acc.append(
+                #     max_role == tgt_roles[max_role]["tgt_real_role"]
+                # )
                 n_samples += 1
+    prec, rec, f1, acc = calculate_metrics(preds, golds)
     print(f"Role guess has {n_samples} samples.")
+
+    scores = {
+        "role_guess": {
+            "precision": prec,
+            "recall": rec,
+            "f1": f1,
+            "acc": acc,
+        }
+    }
+    print(f"Role guess precision: {prec:.2f}")
+    print(f"Role guess recall: {rec:.2f}")
+    print(f"Role guess f1 score: {f1:.2f}")
+    print(f"Role guess accuracy: {acc:.2f}")
 
     # belief guess
     if guess_belief:
         n_samples = 0
         role_belief_acc = []
+        preds, golds = [], []
         for game_idx, players in role_belief_res.items():
             for player_idx, rounds in players.items():
                 for round_idx, tgt_roles in rounds.items():
-                    max_score = max(
-                        score["score"] for score in tgt_roles.values()
-                    )
-                    max_roles = [
-                        key
-                        for key, value in tgt_roles.items()
-                        if value["score"] == max_score
-                    ]
-                    max_role = seeder.choice(max_roles)
-                    tgt_player_i = tgt_roles[max_role]["tgt_player_i"]
-
+                    good_score = 0
+                    evil_score = 0
+                    for role, score in tgt_roles.items():
+                        if role in evil_roles:
+                            evil_score += score["score"]
+                        else:
+                            good_score += score["score"]
+                        pred = evil_score > good_score
+                    tgt_player_i = score["tgt_player_i"]
                     gold_pred = role_guess_res[game_idx][tgt_player_i][
                         round_idx
                     ]
-                    gold_role = gold_pred["pred_role"]
-                    assert gold_pred[gold_role]["tgt_player_i"] == player_idx
-                    role_belief_acc.append(max_role == gold_role)
+                    gold = gold_pred["pred"]
+                    assert (
+                        list(gold_pred.values())[0]["tgt_player_i"]
+                        == player_idx
+                    )
+                    preds.append(pred)
+                    golds.append(gold)
                     n_samples += 1
+
+                    # max_score = max(
+                    #     score["score"] for score in tgt_roles.values()
+                    # )
+                    # max_roles = [
+                    #     key
+                    #     for key, value in tgt_roles.items()
+                    #     if value["score"] == max_score
+                    # ]
+                    # max_role = seeder.choice(max_roles)
+                    # tgt_player_i = tgt_roles[max_role]["tgt_player_i"]
+
+                    # gold_pred = role_guess_res[game_idx][tgt_player_i][
+                    #     round_idx
+                    # ]
+                    # gold_role = gold_pred["pred_role"]
+                    # assert gold_pred[gold_role]["tgt_player_i"] == player_idx
+                    # role_belief_acc.append(max_role == gold_role)
+                    # n_samples += 1
+        prec, rec, f1, acc = calculate_metrics(preds, golds)
+        scores["role_belief"] = {
+            "precision": prec,
+            "recall": rec,
+            "f1": f1,
+            "acc": acc,
+        }
         print(f"Role belief has {n_samples} samples.")
+        print(f"Role belief precision: {prec:.2f}")
+        print(f"Role belief recall: {rec:.2f}")
+        print(f"Role belief f1 score: {f1:.2f}")
+        print(f"Role belief accuracy: {acc:.2f}")
 
     # done and save
-    with open(out_fn, "w") as f:
-        json.dump(role_guess_res, f, indent=4)
+    if not debug:
+        os.makedirs(os.path.dirname(out_fn), exist_ok=True)
+        with open(out_fn, "w") as f:
+            json.dump(role_guess_res, f, indent=4)
+        print(f"Output saved to {out_fn}")
 
-    print(
-        f"Saved file to {out_fn}. Acc= {sum(role_belief_acc)/len(role_belief_acc):.2f}"
-    )
+        os.makedirs(os.path.dirname(result_fn), exist_ok=True)
+        with open(result_fn, "w") as f:
+            json.dump(scores, f, indent=4)
+        print(f"Scores saved to {result_fn}")
 
     # Merlin won't guess
     # good players pick any other
