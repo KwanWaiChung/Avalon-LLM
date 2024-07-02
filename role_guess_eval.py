@@ -88,8 +88,8 @@ class Request:
 
 def main(
     in_fn: str,
-    out_fn: str,
     model_name: str,
+    out_fn: str = None,
     seed: int = 111,
     temperature=0,
     top_p=1,
