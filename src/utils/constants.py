@@ -10,6 +10,7 @@ MODELS = {
     "llama3-8b": {
         "path": {
             "kf": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "ft": "meta-llama/Meta-Llama-3-8B-Instruct",
             "4090": "/HOME/scw6afb/run/llm_models/Meta-Llama-3-8B-Instruct",
         }[SERVER],
         "full_name": "Llama-3-Instruct-8B",
