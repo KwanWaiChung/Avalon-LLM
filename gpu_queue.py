@@ -46,7 +46,9 @@ class TqdmFilter(logging.Filter):
         self.last_percentage = -1
 
     def filter(self, record):
-        if "it/s]" in record.msg:  # This is likely a tqdm output
+        if (
+            "it/s]" in record.msg or "s/it]" in record.msg
+        ):  # This is likely a tqdm output
             match = re.search(r"(\d+)%", record.msg)
             if match:
                 current_percentage = int(match.group(1))
@@ -701,13 +703,13 @@ def set_max_n_gpus(max_n_gpus: int, host="localhost", port=12345):
     print(f"Server response: {response['message']}")
 
 
-def run_server(email_config_fn: str = None):
+def run_server(name: str = "kf05", email_config_fn: str = None):
     if email_config_fn is None:
         parent_folder = os.path.abspath(os.path.dirname(__file__))
         fn = os.path.join(parent_folder, "email_config.json")
         if os.path.exists(fn):
             email_config_fn = fn
-    gpu_queue = GPUTaskQueue(email_config_fn=email_config_fn)
+    gpu_queue = GPUTaskQueue(name=name, email_config_fn=email_config_fn)
     queue_thread = threading.Thread(target=gpu_queue.run, daemon=True)
     queue_thread.start()
     # Run the server
