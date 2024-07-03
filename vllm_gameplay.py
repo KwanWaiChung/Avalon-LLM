@@ -26,6 +26,11 @@ from strictfire import StrictFire
 from tqdm import tqdm
 from copy import deepcopy
 from multiprocessing import Pool
+from src.utils.constants import (
+    ROLE_GUESS_RESULT_DIR,
+    MODELS,
+    ROLE_GUESS_OUTPUT_DIR,
+)
 
 
 DEBUG = False
@@ -263,6 +268,7 @@ class RequestProcessor:
                             k in p_guess
                         ), f"Should have key `{k}` in belief guess but received {p_guess} in game {req.game_idx}."
         self.n_finished_games += 1
+        self.logger.info(f"Game {req.game_idx} has finished.")
 
     def phase_check(self, status, phase):
         # the order might be out of sync
@@ -380,7 +386,7 @@ class RequestProcessor:
                 self.logger
                 and req.status == RequestStatus.TEAM_DISCUSSION_GET_PROMPT
             ):
-                self.logger.info(
+                self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Team discussion phase, the leader is Player {req.history['leaders'][-1]}, current player is Player {req.player_idx}."
                 )
             if len(req.history["team_discs"]) < n_round:
@@ -471,7 +477,7 @@ class RequestProcessor:
                 )
                 return
             if self.logger and RequestStatus.ROLE_GUESS_GET_PROMPT:
-                self.logger.info(
+                self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Role guess phase. Current player is Player {req.player_idx}."
                 )
             if len(req.history["role_guess"]) < n_round:
@@ -480,7 +486,7 @@ class RequestProcessor:
                 req.to_forward
                 and req.player_idx in req.history["role_guess"][n_round - 1]
             ):
-                self.logger.info(
+                self.logger.debug(
                     f"status = {req.status} but role_guess is done. routing request to `guess_belief`. {req}"
                 )
                 self.process_req(
@@ -513,7 +519,7 @@ class RequestProcessor:
                     ]
                 ):
                     if self.logger:
-                        self.logger.info(
+                        self.logger.debug(
                             f"status = {req.status} but role_guess is done. Going to ignore this request."
                         )
                 else:
@@ -584,7 +590,7 @@ class RequestProcessor:
                 )
                 return
             if self.logger and RequestStatus.ROLE_BELIEF_GET_PROMPT:
-                self.logger.info(
+                self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Belief guess phase. Current player is Player {req.player_idx}."
                 )
             if len(req.history["role_belief"]) < n_round:
@@ -607,7 +613,7 @@ class RequestProcessor:
                 ]
                 if tgt_role == "Merlin":
                     if self.logger:
-                        self.logger.info(
+                        self.logger.debug(
                             "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
                         )
                 elif role in good_roles:
@@ -629,7 +635,7 @@ class RequestProcessor:
                 else:  # evil team
                     if tgt_role in bad_roles:
                         if self.logger:
-                            self.logger.info(
+                            self.logger.debug(
                                 f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
                             )
                     else:
@@ -712,7 +718,7 @@ class RequestProcessor:
                 )
                 return
             if self.logger and RequestStatus.SUMMARIZE_GET_PROMPT:
-                self.logger.info(
+                self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Summarize phase. Current player is Player {req.player_idx}."
                 )
             if len(req.history["summaries"]) < n_round:
@@ -788,14 +794,14 @@ class RequestProcessor:
                     )
                 return
             if self.logger:
-                self.logger.info(
-                    f"Game number: {req.game_idx}.  Round: {n_round}. Team proposal phase. Current player is Player {req.player_idx}."
+                self.logger.debug(
+                    f"Game number: {req.game_idx}. Round: {n_round}. Team proposal phase. Current player is Player {req.player_idx}."
                 )
             prompt, status = current_agent.propose_team(req)
             if status == RequestStatus.TEAM_PROPOSAL_SUCCEED:
                 resp: Dict[str, str] = req.resp
                 if self.logger:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Game number: {req.game_idx}.  Round: {n_round}. Team selection phase, the leader, Player {leader}, selected the team {resp['team']}."
                     )
                 req.history["team_props"].append(resp)
@@ -844,7 +850,7 @@ class RequestProcessor:
                 leader: int = req.history["leaders"][-1]
                 team = req.env.get_current_quest_team()
                 if req.status == RequestStatus.TEAM_VOTE_GET_PROMPT:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Game number: {req.game_idx}.  Round: {n_round}. Team vote phase, Player {req.player_idx} voting on team {team} chosen by {leader}."
                     )
             prompt, status = current_agent.vote_on_team(req)
@@ -865,7 +871,7 @@ class RequestProcessor:
                 req.history["team_votes"][-1]["result"] = result[-1]
                 approved_votes = sum(votes)
                 if self.logger:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Game number: {req.game_idx}.  Round: {n_round}. {approved_votes} approved, {len(votes) - approved_votes} failed. The team is {'accepted' if result[-1] else 'failed'}."
                     )
 
@@ -937,7 +943,7 @@ class RequestProcessor:
                 return
 
             if self.logger:
-                self.logger.info(
+                self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Quest vote phase, Player {req.player_idx} voting."
                 )
             prompt, status = current_agent.vote_on_mission(req)
@@ -962,7 +968,7 @@ class RequestProcessor:
                 req.history["quest_votes"][-1]["result"] = result[-2]
                 num_failed = result[-1]
                 if self.logger:
-                    self.logger.info(
+                    self.logger.debug(
                         f"{len(votes) - num_failed} approved, {num_failed} failed. The quest {'suceeds' if result[-2] else 'fails'}."
                     )
 
@@ -1029,7 +1035,7 @@ class RequestProcessor:
         ]:
 
             if self.logger:
-                self.logger.info(
+                self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Assassin phase, Player {req.player_idx} is choosing."
                 )
             prompt, status = current_agent.assassinate(req)
@@ -1045,7 +1051,7 @@ class RequestProcessor:
                 req.history["final_result"] = req.env.good_victory
                 req.history["status"] = "Finished"
                 if self.logger:
-                    self.logger.info(
+                    self.logger.debug(
                         f"The assassination is {'failed' if result[-1] else 'successful'}."
                     )
                 self.finish_game(req)
@@ -1074,8 +1080,9 @@ def main(
     output_path,
     model_name=None,
     model_names: Tuple[
-        Tuple[str, str, int], Tuple[str, str, int]
-    ] = None,  # (model_name, model_path, port number)
+        Dict[str, Union[int, str]],
+        Dict[str, Union[int, str]],
+    ] = None,  # (model_path, port number)
     n_games=20,
     game_batch_size: int = None,
     inference_strategy: str = "vllm",
@@ -1122,6 +1129,13 @@ def main(
     seeder = random.Random(seed)
     if game_batch_size is None:
         game_batch_size = n_games
+    if model_names is not None:
+        assert len(model_names) == 2, "Should provide two models."
+        for _model in model_names:
+            for k in ["port", "path", "name"]:
+                assert (
+                    k in _model
+                ), f"The key `{k}` should be provided. Received: {_model}"
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_name = os.path.split(output_path)[-1].rsplit(".", 1)[0] + ".txt"
@@ -1147,20 +1161,21 @@ def main(
             # model = VllmWrapper(
             #     strategy=AnyscaleInferenceStrategy(), model_name=model_name
             # )
+            model_path = MODELS[model_name]["path"]
             model = AutoModelForCausalLM.from_pretrained(
-                model_name,
+                model_path,
                 trust_remote_code=True,
                 device_map="auto",
                 torch_dtype=torch.float16,
             )
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
             model = VllmStrategyWrapper(
                 strategy=LocalInferenceStrategy(
                     model=model,
                     tokenizer=tokenizer,
                     chat_template=get_conv_template("llama-3"),
                 ),
-                model_name=model_name,
+                model_name=model_path,
                 end_tokens=[tokenizer.eos_token],
             )
         else:
@@ -1172,7 +1187,8 @@ def main(
                     "Using multiple models with local models are only allowed with `DEBUG`."
                 )
             models = []
-            for i, (_, model_path, port) in enumerate(model_names):
+            for i, model_config in enumerate(model_names):
+                model_path = model_config["path"]
                 model = AutoModelForCausalLM.from_pretrained(
                     model_path,
                     trust_remote_code=True,
@@ -1223,8 +1239,9 @@ def main(
     elif inference_strategy == "vllm" and model_name is not None:
         from vllm import LLM, SamplingParams
 
+        model_path = MODELS[model_name]["path"]
         model = LLM(
-            model=model_name,
+            model=model_path,
             dtype="float16",
             tensor_parallel_size=n_gpus,
             seed=seed if seed_global else 0,
@@ -1247,11 +1264,12 @@ def main(
             add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
             use_summary=use_summary,
             include_prev_disc=include_prev_disc,
-            chat_template=get_conv_template("llama-3"),
+            chat_template=get_conv_template(MODELS[model_name]["template"]),
         )
         agents.append((model_name, agent))
     else:
-        for i, (_model_name, model_path, port) in enumerate(model_names):
+        for i, model_config in enumerate(model_names):
+            model_path = model_config["path"]
             agent = VllmAgent(
                 add_strategy_in_prompt=add_strategy_in_prompt,
                 add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
@@ -1265,9 +1283,11 @@ def main(
                     if isinstance(include_prev_disc, list)
                     else include_prev_disc
                 ),
-                chat_template=get_conv_template("llama-3"),
+                chat_template=get_conv_template(
+                    MODELS[model_config["name"]]["template"]
+                ),
             )
-            agents.append((_model_name, agent))
+            agents.append((model_config["name"], agent))
 
     req_processor = RequestProcessor(
         agents=agents,
@@ -1312,9 +1332,16 @@ def main(
             }
             if model_names is not None:
                 # game 1
+                history["n_error"] = {
+                    model_config["name"]: 0 for model_config in model_names
+                }
                 new_history = deepcopy(history)
                 new_history["models"] = [
-                    model_names[0][0] if role[-1] else model_names[1][0]
+                    (
+                        model_names[0]["name"]
+                        if role[-1]
+                        else model_names[1]["name"]
+                    )
                     for role in history["roles"]
                 ]
                 reqs.append(
@@ -1335,7 +1362,11 @@ def main(
                     env = deepcopy(env)
                     new_history = deepcopy(history)
                     new_history["models"] = [
-                        model_names[1][0] if role[-1] else model_names[0][0]
+                        (
+                            model_names[1]["name"]
+                            if role[-1]
+                            else model_names[0]["name"]
+                        )
                         for role in history["roles"]
                     ]
                     reqs.append(
@@ -1352,6 +1383,7 @@ def main(
                     histories.append(new_history)
             else:
                 history["models"] = [model_name] * n_players
+                history["n_error"] = {model_name: 0}
                 histories.append(history)
                 # (prompt, resp, game idx, history, env, status, buffer)
                 # buffer mainly for storing temporary messages.
@@ -1392,18 +1424,19 @@ def main(
                 args = []
                 for req in reqs:
                     for model_i in range(2):
+                        model_path = model_names[model_i]["path"]
                         if (
                             req.history["models"][req.player_idx]
-                            == model_names[model_i][0]
+                            == model_names[model_i]["name"]
                         ):
                             args.append(
                                 (
                                     req.prompt,
-                                    model_names[model_i][1],
+                                    model_path,
                                     max_tokens,
                                     temperature,
                                     top_p,
-                                    f"http://localhost:{model_names[model_i][2]}/v1",
+                                    f"http://localhost:{model_names[model_i]['port']}/v1",
                                 )
                             )
                 if DEBUG:
@@ -1412,7 +1445,7 @@ def main(
                         for model_i in range(2):
                             if (
                                 req.history["models"][req.player_idx]
-                                == model_names[model_i][0]
+                                == model_names[model_i]["name"]
                             ):
                                 resp = model.generate(
                                     [req.prompt],
