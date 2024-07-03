@@ -732,6 +732,7 @@ def main(
         tokenizer=tokenizer,
         dataset=dataset,
         loglikelihood_batch_size=loglikelihood_batch_size,
+        save_path=save_path,
     )
 
     # train model for one step with ppo

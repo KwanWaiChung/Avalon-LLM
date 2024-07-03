@@ -172,6 +172,8 @@ class PPOTrainer(BaseTrainer):
         data_collator: Optional[typing.Callable] = None,
         num_shared_layers: Optional[int] = None,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+        save_path: str = None,
+        steps_per_save: int = 100,
     ):
         """
         Initialize PPOTrainer.
@@ -202,6 +204,8 @@ class PPOTrainer(BaseTrainer):
         super().__init__(config)
         self.loglikelihood_batch_size = loglikelihood_batch_size
         self.update_step = 0
+        self.save_path = save_path
+        self.steps_per_save = steps_per_save
 
         # initial seed for reproducible experiments
         set_seed(config.seed)
@@ -1011,6 +1015,11 @@ class PPOTrainer(BaseTrainer):
                             metric_dicts = self.gather_stats(metric_dicts)
                         self.accelerator.log(metric_dicts)
                         batch_stats = []
+                        if self.update_step % self.steps_per_save == 0:
+                            save_path = os.path.join(
+                                self.save_path, f"ckpt-{self.update_step}"
+                            )
+                            self.save_pretrained(save_path)
                     pbar.update(1)
             # typically, early stopping is done at the epoch level
             if self.config.early_stopping:
