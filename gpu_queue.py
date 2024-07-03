@@ -199,7 +199,7 @@ class GPUTaskQueue:
         self,
         command: str,
         n_gpus: int,
-        output_file: str,
+        output_file: str = None,
         output_file_max_bytes: int = 10 * 1024 * 1024,  # 10 MB
         output_file_backup_count: int = 2,
         priority: int = 10,
@@ -633,7 +633,7 @@ def _format_td(td: timedelta) -> str:
 def add_task(
     command: str,
     n_gpus: int,
-    output_file: str,
+    output_file: str = None,
     output_file_max_bytes: int = 10 * 1024 * 1024,  # 10 MB
     output_file_backup_count: int = 2,
     priority: int = 10,
