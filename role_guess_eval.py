@@ -8,7 +8,7 @@ from vllm_gameplay import RequestOutput
 from copy import deepcopy
 from fastchat.conversation import get_conv_template
 from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
-from src.server.tasks.avalon.my_prompts import GUESS_ONE_ROLE_PROMPT
+from src.server.tasks.avalon.my_prompts import GUESS_TEAM_PROMPT
 from src.utils.vllm_misc import RequestStatus
 from typing import Dict, Any
 from src.utils.logger import get_logger
@@ -181,8 +181,9 @@ def main(
                         "roles": history["roles"],
                         "input_tokens": 0,
                         "output_tokens": 0,
-                        "n_error": 0,
+                        "n_error": {model_name: 0},
                         "id": history["id"],
+                        "models": [model_name] * len(history["roles"]),
                     }
                     req = Request(
                         prompt=None,
