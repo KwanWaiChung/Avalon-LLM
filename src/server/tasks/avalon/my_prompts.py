@@ -112,8 +112,22 @@ Format your output as JSON:
     "score": <int: 1 to 10>
 }"""
 
+GUESS_TEAM_PROMPT = """Based on the game so far, rate how likely is Player {i} being an Evil team member from 1 (very unlikely) to 10 (very likely). First state your rationale and then provide the score.
+Format your output as JSON:
+{
+    "rationale": <str: rationale to support>,
+    "score": <int: 1 to 10>
+}"""
+
 
 GUESS_OTHERS_BELIEF_PRMOPT = """Based on the game so far, how you think Player {i} would rate your chances of being {role} from 1 (very unlikely) to 10 (very likely)? First state your rationale and then provide the score.
+Format your output as JSON:
+{
+    "rationale": <str>,
+    "score": <int: 1 to 10>
+}"""
+
+GUESS_TEAM_BELIEF_PRMOPT = """Based on the game so far, how you think Player {i} would rate your chances of being an Evil team member from 1 (very unlikely) to 10 (very likely)? First state your rationale and then provide the score.
 Format your output as JSON:
 {
     "rationale": <str>,

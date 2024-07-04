@@ -29,6 +29,7 @@ from src.server.tasks.avalon.my_prompts import (
     GUESS_ONE_ROLE_PROMPT,
     GUESS_ROLE_CHEAT_DIFFERENT_HINT,
     GUESS_ROLE_CHEAT_SAME_HINT,
+    GUESS_TEAM_PROMPT,
 )
 from fastchat.conversation import Conversation
 import json
@@ -1245,12 +1246,17 @@ class VllmAgent:
         self,
         req: Request,
         to_guess_multiple_player: bool = True,
+        use_team_prompt: bool = False,
     ) -> Dict[str, Any]:
         """
         Guess the role of a player based on the game state.
 
         Args:
             player_i (int): The index of the player to guess.
+            to_guess_multiple_player: Whether to guess the roles of multiple
+                players. Defaults to True.
+            use_team_prompt: Whether to use a prompt that asks the model to
+                guess the team of a player. Defaults to False.
 
 
         Returns:
@@ -1285,9 +1291,14 @@ class VllmAgent:
             )
             included_roles = []
             if not to_guess_multiple_player:
-                prompt += " " + GUESS_ONE_ROLE_PROMPT.replace(
-                    "{i}", str(tgt_player_i)
-                ).replace("{role}", tgt_role)
+                if use_team_prompt:
+                    prompt += " " + GUESS_TEAM_PROMPT.replace(
+                        "{i}", str(tgt_player_i)
+                    )
+                else:
+                    prompt += " " + GUESS_ONE_ROLE_PROMPT.replace(
+                        "{i}", str(tgt_player_i)
+                    ).replace("{role}", tgt_role)
             else:
                 if role[1] == "Servant":
                     prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
