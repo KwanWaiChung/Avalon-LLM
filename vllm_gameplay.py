@@ -33,6 +33,7 @@ from src.utils.constants import (
 )
 
 
+USE_MESSAGE = False
 DEBUG = False
 strategy = OpenAIInferenceStrategy(key_path=None)
 
@@ -45,16 +46,28 @@ def wrapper(
     top_p: float,
     base_url: str,
 ):
-    output = strategy.generate(
-        model_name=model,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        chat_mode=False,
-        temperature=temperature,
-        top_p=top_p,
-        base_url=base_url,
-        seed=None,
-    )
+    if USE_MESSAGE:
+        output = strategy.generate(
+            model_name=model,
+            messages=prompt,
+            max_tokens=max_tokens,
+            chat_mode=True,
+            temperature=temperature,
+            top_p=top_p,
+            base_url=base_url,
+            seed=None,
+        )
+    else:
+        output = strategy.generate(
+            model_name=model,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            chat_mode=False,
+            temperature=temperature,
+            top_p=top_p,
+            base_url=base_url,
+            seed=None,
+        )
     return output
 
 
@@ -136,6 +149,7 @@ class RequestProcessor:
         to_guess_belief: bool,
         use_summary: Union[bool, List[bool]],
         logger=None,
+        use_team_prompt: bool = False,
     ):
         self.agents = {name: agent for name, agent in agents}
         self.to_discuss = to_discuss
@@ -149,6 +163,7 @@ class RequestProcessor:
         )
         self.logger = logger
         self.n_finished_games = 0
+        self.use_team_prompt = use_team_prompt
 
     def _get_num_players(self, req) -> int:
         return len(req.env.get_roles())
@@ -507,6 +522,7 @@ class RequestProcessor:
             prompt, status = current_agent.guess_role(
                 req,
                 to_guess_multiple_player=self.to_guess_multiple_player_role,
+                use_team_prompt=self.use_team_prompt,
             )
             if status == RequestStatus.ROLE_GUESS_SUCCEED:
                 resp = req.resp
@@ -601,7 +617,9 @@ class RequestProcessor:
                     f"status = {req.status} but role_belief is done."
                 )
 
-            prompt, status = current_agent.guess_belief(req)
+            prompt, status = current_agent.guess_belief(
+                req, use_team_prompt=self.use_team_prompt
+            )
             if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
                 role = req.env.get_role(req.player_idx)[1]
                 tgt_role: str = req.env.get_role(req.buffer["tgt_player_i"])[1]
@@ -1101,6 +1119,7 @@ def main(
     include_prev_disc: Union[bool, List[bool]] = True,
     n_gpus: int = 1,
     seed_global: bool = False,
+    use_team_prompt: bool = False,
 ):
     """_summary_
 
@@ -1122,6 +1141,7 @@ def main(
         to_guess_belief (bool, optional): _description_. Defaults to False.
         use_summary (bool, optional): _description_. Defaults to False.
         n_gpus (int, optional): _description_. Defaults to 1.
+        use_team_prompt: use team prompt in role guess and role belief.
 
     Raises:
         ValueError: _description_
@@ -1299,6 +1319,7 @@ def main(
         to_guess_belief=to_guess_belief,
         use_summary=use_summary,
         logger=logger,
+        use_team_prompt=use_team_prompt,
     )
     histories = []
     n_players = 6
@@ -1421,24 +1442,6 @@ def main(
                     # use_tqdm=False,
                 )
             else:  # multiple models
-                args = []
-                for req in reqs:
-                    for model_i in range(2):
-                        model_path = model_names[model_i]["path"]
-                        if (
-                            req.history["models"][req.player_idx]
-                            == model_names[model_i]["name"]
-                        ):
-                            args.append(
-                                (
-                                    req.prompt,
-                                    model_path,
-                                    max_tokens,
-                                    temperature,
-                                    top_p,
-                                    f"http://localhost:{model_names[model_i]['port']}/v1",
-                                )
-                            )
                 if DEBUG:
                     resps = []
                     for req in reqs:
@@ -1454,6 +1457,28 @@ def main(
                                 )
                                 resps += resp
                 else:
+                    args = []
+                    for req in reqs:
+                        for model_i in range(2):
+                            model_path = model_names[model_i]["path"]
+                            if (
+                                req.history["models"][req.player_idx]
+                                == model_names[model_i]["name"]
+                            ):
+                                args.append(
+                                    (
+                                        (
+                                            req.buffer["msg"]
+                                            if USE_MESSAGE
+                                            else req.prompt
+                                        ),
+                                        model_path,
+                                        max_tokens,
+                                        temperature,
+                                        top_p,
+                                        f"http://localhost:{model_names[model_i]['port']}/v1",
+                                    )
+                                )
                     p = Pool(500)
                     outputs = p.starmap(wrapper, args)
                     resps = [

@@ -30,6 +30,7 @@ from src.server.tasks.avalon.my_prompts import (
     GUESS_ROLE_CHEAT_DIFFERENT_HINT,
     GUESS_ROLE_CHEAT_SAME_HINT,
     GUESS_TEAM_PROMPT,
+    GUESS_TEAM_BELIEF_PRMOPT,
 )
 from fastchat.conversation import Conversation
 import json
@@ -1492,13 +1493,15 @@ class VllmAgent:
         self,
         req: Request,
         to_guess_multiple_player: bool = True,
+        use_team_prompt: bool = False,
     ) -> Dict[str, Any]:
         """
         Guess the role of a player based on the game state.
 
         Args:
             player_i (int): The index of the player to guess.
-
+            use_team_prompt: Whether to use a prompt that asks the model to
+                guess the team of a player. Defaults to False.
 
         Returns:
             A dictionary with keys:
@@ -1558,9 +1561,14 @@ class VllmAgent:
             )
             included_roles = []
             if not to_guess_multiple_player:
-                prompt += " " + GUESS_ONE_ROLE_PROMPT.replace(
-                    "{i}", str(player_i)
-                ).replace("{role}", tgt_role)
+                if use_team_prompt:
+                    prompt += " " + GUESS_TEAM_PROMPT.replace(
+                        "{i}", str(player_i)
+                    )
+                else:
+                    prompt += " " + GUESS_ONE_ROLE_PROMPT.replace(
+                        "{i}", str(player_i)
+                    ).replace("{role}", tgt_role)
             else:
                 if role_name == "Servant":
                     prompt += " " + GUESS_ALL_ROLE_PROMPT.replace(
@@ -1765,7 +1773,9 @@ class VllmAgent:
                 prompt = req.buffer["prompt"]
                 return prompt, RequestStatus.ROLE_GUESS_SUCCEED
 
-    def guess_belief(self, req: Request) -> Dict[str, Any]:
+    def guess_belief(
+        self, req: Request, use_team_prompt: bool = False
+    ) -> Dict[str, Any]:
         roles = req.history["roles"]
         n_players = len(roles)
         if "tgt_player_i" in req.args:
@@ -1785,9 +1795,14 @@ class VllmAgent:
                 history=req.history,
                 player_list=roles,
             )
-            prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
-                "{i}", str(tgt_player_i)
-            ).replace("{role}", tgt_role)
+            if use_team_prompt:
+                prompt += " " + GUESS_TEAM_BELIEF_PRMOPT.replace(
+                    "{i}", str(tgt_player_i)
+                )
+            else:
+                prompt += " " + GUESS_OTHERS_BELIEF_PRMOPT.replace(
+                    "{i}", str(tgt_player_i)
+                ).replace("{role}", tgt_role)
             messages = [{"role": "user", "content": prompt}]
             req.buffer["trial"] = 0
             req.buffer["prompt"] = prompt
