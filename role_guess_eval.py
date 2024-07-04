@@ -526,10 +526,33 @@ def main(
 
     # done and save
     if not debug:
+        args_dict = {
+            "in_fn": in_fn,
+            "model_name": model_name,
+            "out_fn": out_fn,
+            "result_fn": result_fn,
+            "seed": seed,
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens,
+            "n_gpus": n_gpus,
+            "max_trial": max_trial,
+            "seed_global": seed_global,
+            "use_summary": use_summary,
+            "include_prev_disc": include_prev_disc,
+            "only_servant_guess": only_servant_guess,
+            "guess_belief": guess_belief,
+            "n_games": n_games,
+            "debug": debug,
+        }
         os.makedirs(os.path.dirname(out_fn), exist_ok=True)
         with open(out_fn, "w") as f:
             json.dump(
-                {"role_guess": role_guess_res, "role_belief": role_belief_res},
+                {
+                    "role_guess": role_guess_res,
+                    "role_belief": role_belief_res,
+                    "args": args_dict,
+                },
                 f,
                 indent=4,
             )
