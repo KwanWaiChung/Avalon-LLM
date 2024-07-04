@@ -1150,7 +1150,7 @@ def main(
     if game_batch_size is None:
         game_batch_size = n_games
     if model_names is not None:
-        assert len(model_names) == 2, "Should provide two models."
+        # assert len(model_names) == 2, "Should provide two models."
         for _model in model_names:
             for k in ["port", "path", "name"]:
                 assert (
@@ -1352,16 +1352,23 @@ def main(
                 "id": game_i,
             }
             if model_names is not None:
+                current_model_names = model_names
+                if len(current_model_names) > 2:
+                    current_model_names = seeder.sample(
+                        current_model_names, k=2
+                    )
+
                 # game 1
                 history["n_error"] = {
-                    model_config["name"]: 0 for model_config in model_names
+                    model_config["name"]: 0
+                    for model_config in current_model_names
                 }
                 new_history = deepcopy(history)
                 new_history["models"] = [
                     (
-                        model_names[0]["name"]
+                        current_model_names[0]["name"]
                         if role[-1]
-                        else model_names[1]["name"]
+                        else current_model_names[1]["name"]
                     )
                     for role in history["roles"]
                 ]
@@ -1384,9 +1391,9 @@ def main(
                     new_history = deepcopy(history)
                     new_history["models"] = [
                         (
-                            model_names[1]["name"]
+                            current_model_names[1]["name"]
                             if role[-1]
-                            else model_names[0]["name"]
+                            else current_model_names[0]["name"]
                         )
                         for role in history["roles"]
                     ]
@@ -1445,7 +1452,7 @@ def main(
                 if DEBUG:
                     resps = []
                     for req in reqs:
-                        for model_i in range(2):
+                        for model_i in range(len(model_names)):
                             if (
                                 req.history["models"][req.player_idx]
                                 == model_names[model_i]["name"]
@@ -1459,7 +1466,7 @@ def main(
                 else:
                     args = []
                     for req in reqs:
-                        for model_i in range(2):
+                        for model_i in range(len(model_names)):
                             model_path = model_names[model_i]["path"]
                             if (
                                 req.history["models"][req.player_idx]
