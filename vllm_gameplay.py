@@ -34,7 +34,7 @@ from src.utils.constants import (
 
 
 USE_MESSAGE = True
-DEBUG = 2
+DEBUG = 1
 strategy = OpenAIInferenceStrategy(key_path=None)
 
 
@@ -368,6 +368,7 @@ class RequestProcessor:
         phase: int = req.env.get_phase()[0]
         self.phase_check(req.status, phase)
         n_round = len(req.history["leaders"])
+        assert n_round == req.round_idx
         n_player = self._get_num_players(req)
         if req.player_idx >= len(req.history["models"]):
             self.logger.warning(
@@ -413,23 +414,14 @@ class RequestProcessor:
             player_id = req.player_idx
             if player_id in req.history["team_discs"][n_round - 1]:
                 raise ValueError(
-                    f"status = {req.status} but team discussion is done for game {req.game_idx} round {n_round-1}."
+                    f"status = {req.status} but team discussion is done for game {req.game_idx} round {n_round} player {player_id}."
                 )
             prompt, status = current_agent.team_discussion(req)
             if status == RequestStatus.TEAM_DISCUSSION_SUCCEED:
+                for i in range(player_id):
+                    assert i in req.history["team_discs"][n_round - 1]
                 resp = req.resp
-                if req.game_idx == 33:
-                    self.logger.warning(
-                        f"n_round={n_round}, player_id={player_id}"
-                    )
-                    self.logger.warning(
-                        f"Before update: {req.history['team_discs'][n_round-1].keys()}"
-                    )
                 req.history["team_discs"][n_round - 1][player_id] = resp
-                if req.game_idx == 33:
-                    self.logger.warning(
-                        f"Before update: {req.history['team_discs'][n_round-1].keys()}"
-                    )
                 if len(req.history["team_discs"][n_round - 1]) == n_player:
                     for i in range(n_player):
                         self.process_req(
@@ -1198,6 +1190,24 @@ def main(
 
     # init
     reqs = []
+    if DEBUG == 1 and inference_strategy == "vllm" and models is not None:
+        # just use one model here for debug
+        from vllm import LLM, SamplingParams
+
+        model_name = models[0]["name"]
+        model_path = MODELS[model_name]["path"]
+        model = LLM(
+            model=model_path,
+            dtype="float16",
+            tensor_parallel_size=n_gpus,
+            seed=seed if seed_global else 0,
+        )
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            seed=seed if not seed_global else None,
+        )
     if DEBUG == 1 or inference_strategy == "local":
         if model_name is not None:
             # model = VllmWrapper(
@@ -1242,7 +1252,9 @@ def main(
                     strategy=LocalInferenceStrategy(
                         model=model,
                         tokenizer=tokenizer,
-                        chat_template=get_conv_template("llama-3"),
+                        chat_template=get_conv_template(
+                            MODELS[model_config["name"]]["template"]
+                        ),
                     ),
                     model_name=model_path,  # doesn't matter
                     end_tokens=[tokenizer.eos_token],
@@ -1462,7 +1474,7 @@ def main(
             pbar = tqdm(total=len(reqs), desc="Sampling games")
         count = 0
         while reqs:
-            if DEBUG==2:
+            if DEBUG == 2:
                 with open(f"outputs/reqs_{req_round_i}.pkl", "wb") as f:
                     pickle.dump(reqs, f)
             req_round_i += 1
@@ -1473,7 +1485,11 @@ def main(
                     req_queue=new_reqs,
                 )
             reqs = new_reqs
-            if model_name is not None:
+            if model_name is not None or (
+                model_names is not None
+                and DEBUG == 1
+                and inference_strategy == "vllm"
+            ):
                 resps = model.generate(
                     [req.prompt for req in reqs],
                     sampling_params=sampling_params,
