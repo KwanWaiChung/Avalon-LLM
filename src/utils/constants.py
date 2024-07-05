@@ -16,6 +16,16 @@ MODELS = {
         "full_name": "Llama-3-Instruct-8B",
         "template": "llama-3",
     },
+    "gemma2-9b": {
+        "path": "google/gemma-2-9b-it",
+        "full_name": "google/gemma-2-9b-it",
+        "template": "gemma",
+    },
+    "mistral-7b": {
+        "path": "mistralai/Mistral-7B-Instruct-v0.3",
+        "full_name": "mistralai/Mistral-7B-Instruct-v0.3",
+        "template": "mistral",
+    },
     "llama3-8b-sft-iter=1": {
         "path": os.path.join(
             get_project_root(),

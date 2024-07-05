@@ -33,8 +33,8 @@ from src.utils.constants import (
 )
 
 
-USE_MESSAGE = False
-DEBUG = False
+USE_MESSAGE = True
+DEBUG = 2
 strategy = OpenAIInferenceStrategy(key_path=None)
 
 
@@ -369,6 +369,10 @@ class RequestProcessor:
         self.phase_check(req.status, phase)
         n_round = len(req.history["leaders"])
         n_player = self._get_num_players(req)
+        if req.player_idx >= len(req.history["models"]):
+            self.logger.warning(
+                f"req.player_idx={req.player_idx}, req.status={req.status}, models={req.history['models']}"
+            )
         current_model = req.history["models"][req.player_idx]
         current_agent = self.agents[current_model]
         use_summary = current_agent.use_summary
@@ -392,7 +396,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -414,7 +418,18 @@ class RequestProcessor:
             prompt, status = current_agent.team_discussion(req)
             if status == RequestStatus.TEAM_DISCUSSION_SUCCEED:
                 resp = req.resp
+                if req.game_idx == 33:
+                    self.logger.warning(
+                        f"n_round={n_round}, player_id={player_id}"
+                    )
+                    self.logger.warning(
+                        f"Before update: {req.history['team_discs'][n_round-1].keys()}"
+                    )
                 req.history["team_discs"][n_round - 1][player_id] = resp
+                if req.game_idx == 33:
+                    self.logger.warning(
+                        f"Before update: {req.history['team_discs'][n_round-1].keys()}"
+                    )
                 if len(req.history["team_discs"][n_round - 1]) == n_player:
                     for i in range(n_player):
                         self.process_req(
@@ -426,12 +441,19 @@ class RequestProcessor:
                                 history=req.history,
                                 env=req.env,
                                 status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                                prev=req,
+                                prev=deepcopy(req),
                             ),
                             req_queue=req_queue,
                         )
                     return
                 else:
+                    # debug
+                    if req.player_idx == 5:
+                        self.logger.warning(
+                            f"game idx={req.game_idx}, team_keys = {req.history['team_discs'][n_round-1].keys()}"
+                        )
+                        with open("outputs/debug.pkl", "wb") as f:
+                            pickle.dump(req, f)
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -441,7 +463,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -458,7 +480,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -486,7 +508,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                        prev=req,
+                        prev=deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -513,7 +535,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                        prev=req,
+                        prev=deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -561,7 +583,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -578,7 +600,7 @@ class RequestProcessor:
                         status=status,
                         buffer=req.buffer,
                         to_forward=req.to_forward,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -600,7 +622,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.SUMMARIZE_GET_PROMPT,
-                        prev=req,
+                        prev=deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -614,7 +636,7 @@ class RequestProcessor:
 
             if req.player_idx in req.history["role_belief"][n_round - 1]:
                 raise ValueError(
-                    f"status = {req.status} but role_belief is done."
+                    f"status = {req.status} but role belief  is done for game {req.game_idx} round {n_round-1}."
                 )
 
             prompt, status = current_agent.guess_belief(
@@ -646,7 +668,7 @@ class RequestProcessor:
                             to_forward=False,
                             status=RequestStatus.ROLE_GUESS_GET_PROMPT,
                             args={"tgt_player_i": req.player_idx},
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -668,7 +690,7 @@ class RequestProcessor:
                                 to_forward=False,
                                 status=RequestStatus.ROLE_GUESS_GET_PROMPT,
                                 args={"tgt_player_i": req.player_idx},
-                                prev=req,
+                                prev=deepcopy(req),
                             ),
                             req_queue=req_queue,
                         )
@@ -692,7 +714,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.SUMMARIZE_GET_PROMPT,
-                        prev=req,
+                        prev=deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -708,7 +730,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -730,7 +752,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.TEAM_PROPOSAL_GET_PROMPT,
-                        prev=req,
+                        prev=deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -743,7 +765,7 @@ class RequestProcessor:
                 req.history["summaries"].append({})
             if req.player_idx in req.history["summaries"][n_round - 1]:
                 raise ValueError(
-                    f"status = {req.status} but summarize is done."
+                    f"status = {req.status} but summarization is done for game {req.game_idx} round {n_round-1}."
                 )
 
             prompt, status = current_agent.summarize(req)
@@ -773,7 +795,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_PROPOSAL_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -789,7 +811,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -836,7 +858,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_VOTE_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -852,7 +874,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -905,7 +927,7 @@ class RequestProcessor:
                                 history=req.history,
                                 env=req.env,
                                 status=RequestStatus.QUEST_VOTE_GET_PROMPT,
-                                prev=req,
+                                prev=deepcopy(req),
                             ),
                             req_queue=req_queue,
                         )
@@ -922,7 +944,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -940,7 +962,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -1002,7 +1024,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.ASSASSIN_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -1019,7 +1041,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                            prev=req,
+                            prev=deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -1042,7 +1064,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -1085,7 +1107,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=req,
+                        prev=deepcopy(req),
                     )
                 )
                 return
@@ -1176,7 +1198,7 @@ def main(
 
     # init
     reqs = []
-    if DEBUG or inference_strategy == "local":
+    if DEBUG == 1 or inference_strategy == "local":
         if model_name is not None:
             # model = VllmWrapper(
             #     strategy=AnyscaleInferenceStrategy(), model_name=model_name
@@ -1202,7 +1224,7 @@ def main(
             logger.warning(
                 "Using multiple models with local models are supposed only for debugging purpose."
             )
-            if not DEBUG:
+            if DEBUG == 0:
                 raise ValueError(
                     "Using multiple models with local models are only allowed with `DEBUG`."
                 )
@@ -1326,6 +1348,7 @@ def main(
     config = AvalonBasicConfig.from_num_players(
         n_players, percival=True, morgana=True
     )
+    req_round_i = 0
     # n_game = 50, game_batch_size = 20,
     # range(1, 21), range(21, 41), range(41, 51)
     for start_game_i in range(1, n_games + 1, game_batch_size):
@@ -1354,9 +1377,13 @@ def main(
             if model_names is not None:
                 current_model_names = model_names
                 if len(current_model_names) > 2:
-                    current_model_names = seeder.sample(
+                    # allow duplicate here
+                    current_model_names = seeder.choices(
                         current_model_names, k=2
                     )
+                    # current_model_names = seeder.sample(
+                    #     current_model_names, k=2
+                    # )
 
                 # game 1
                 history["n_error"] = {
@@ -1435,6 +1462,10 @@ def main(
             pbar = tqdm(total=len(reqs), desc="Sampling games")
         count = 0
         while reqs:
+            if DEBUG==2:
+                with open(f"outputs/reqs_{req_round_i}.pkl", "wb") as f:
+                    pickle.dump(reqs, f)
+            req_round_i += 1
             new_reqs = []
             for req in reqs:
                 req_processor.process_req(
@@ -1449,7 +1480,7 @@ def main(
                     # use_tqdm=False,
                 )
             else:  # multiple models
-                if DEBUG:
+                if DEBUG == 1:
                     resps = []
                     for req in reqs:
                         for model_i in range(len(model_names)):
@@ -1457,7 +1488,7 @@ def main(
                                 req.history["models"][req.player_idx]
                                 == model_names[model_i]["name"]
                             ):
-                                resp = model.generate(
+                                resp = models[model_i].generate(
                                     [req.prompt],
                                     sampling_params=sampling_params,
                                     # use_tqdm=False,
@@ -1486,6 +1517,7 @@ def main(
                                         f"http://localhost:{model_names[model_i]['port']}/v1",
                                     )
                                 )
+                    assert len(args) == len(reqs)
                     p = Pool(500)
                     outputs = p.starmap(wrapper, args)
                     resps = [
@@ -1502,7 +1534,7 @@ def main(
             for req, resp in zip(reqs, resps):
                 req.resp = resp.outputs[0].text
                 if (
-                    not DEBUG
+                    DEBUG == 0
                     and model_name is not None
                     and inference_strategy == "vllm"
                 ):
