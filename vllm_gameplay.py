@@ -1190,12 +1190,12 @@ def main(
 
     # init
     reqs = []
-    if DEBUG == 1 and inference_strategy == "vllm" and models is not None:
+    if DEBUG == 1 and inference_strategy == "vllm" and model_names is not None:
         # just use one model here for debug
         from vllm import LLM, SamplingParams
 
-        model_name = models[0]["name"]
-        model_path = MODELS[model_name]["path"]
+        _model_name = model_names[0]["name"]
+        model_path = MODELS[_model_name]["path"]
         model = LLM(
             model=model_path,
             dtype="float16",

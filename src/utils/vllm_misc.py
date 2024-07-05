@@ -4,6 +4,8 @@ from enum import Enum
 
 
 class Request:
+    _id_counter = 0
+
     def __init__(
         self,
         prompt: str,
@@ -16,8 +18,11 @@ class Request:
         to_forward: bool = True,
         args: Dict[str, Any] = None,
         buffer: Dict[str, Any] = None,
+        round_idx: int = None,
         prev=None,
     ):
+        self.id = Request._id_counter
+        Request._id_counter += 1
         self.prompt = prompt
         self.resp = resp
         self.game_idx = game_idx
@@ -30,6 +35,9 @@ class Request:
             buffer = {}
         if args is None:
             args = {}
+        if round_idx is None:
+            round_idx = len(history["leaders"])
+        self.round_idx = round_idx
         self.args = args
         self.buffer = buffer
         self.prev = prev
