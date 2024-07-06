@@ -47,7 +47,7 @@ class TqdmFilter(logging.Filter):
 
     def filter(self, record):
         if (
-            "it/s]" in record.msg or "s/it]" in record.msg
+            "it/s" in record.msg or "s/it" in record.msg
         ):  # This is likely a tqdm output
             match = re.search(r"(\d+)%", record.msg)
             if match:
@@ -185,7 +185,7 @@ class GPUTaskQueue:
         for gpu_id, gpu_stat in enumerate(gpu_stats_list):
             used = gpu_stat["memory.used"]
             total = gpu_stat["memory.total"]
-            if used / total <= 0.2 and gpu_id not in self.assigned_gpus:
+            if used / total <= 0.05 and gpu_id not in self.assigned_gpus:
                 available_gpus.append(gpu_id)
         max_n_gpus = max(0, self.max_n_gpus - len(self.assigned_gpus))
         return available_gpus[:max_n_gpus]
@@ -703,7 +703,7 @@ def set_max_n_gpus(max_n_gpus: int, host="localhost", port=12345):
     print(f"Server response: {response['message']}")
 
 
-def run_server(name: str = "kf05", email_config_fn: str = None):
+def run_server(name: str = "kf05", email_config_fn: str = None, port:int=12345):
     if email_config_fn is None:
         parent_folder = os.path.abspath(os.path.dirname(__file__))
         fn = os.path.join(parent_folder, "email_config.json")
@@ -713,7 +713,7 @@ def run_server(name: str = "kf05", email_config_fn: str = None):
     queue_thread = threading.Thread(target=gpu_queue.run, daemon=True)
     queue_thread.start()
     # Run the server
-    _run_server("localhost", 12345, gpu_queue)
+    _run_server("localhost", port, gpu_queue)
 
 
 if __name__ == "__main__":
