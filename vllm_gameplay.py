@@ -4,6 +4,7 @@ import os
 import pickle
 import torch
 import numpy as np
+from collections import defaultdict
 from src.server.tasks.avalon.engine import (
     AvalonGameEnvironment,
     AvalonBasicConfig,
@@ -34,7 +35,7 @@ from src.utils.constants import (
 
 
 USE_MESSAGE = True
-DEBUG = 1
+DEBUG = 0
 strategy = OpenAIInferenceStrategy(key_path=None)
 
 
@@ -165,8 +166,16 @@ class RequestProcessor:
         self.n_finished_games = 0
         self.use_team_prompt = use_team_prompt
 
+        # use to block `get_summary` if `use_summary` is not used to
+        # maintain the same logic flow when `use_summary` is used.
+        self.n_summaries = defaultdict(int)
+
+    def _set_curr_queue(self, queue: List[Request]):
+        # for debugging only
+        self.cur_queue = queue
+
     def _get_num_players(self, req) -> int:
-        return len(req.env.get_roles())
+        return len(req.history["roles"])
 
     def finish_game(self, req):
         if not req.env.done:
@@ -365,10 +374,10 @@ class RequestProcessor:
         # (prompt, resp, game idx, history, env, status)
         # All requests in the queue must have prompts except for the first round
         # (i.e. status=0)
-        phase: int = req.env.get_phase()[0]
-        self.phase_check(req.status, phase)
         n_round = len(req.history["leaders"])
-        assert n_round == req.round_idx
+        assert n_round == req.round_idx, req
+        # phase: int = req.env.get_phase()[0]
+        # self.phase_check(req.status, phase)
         n_player = self._get_num_players(req)
         if req.player_idx >= len(req.history["models"]):
             self.logger.warning(
@@ -397,7 +406,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -433,7 +442,7 @@ class RequestProcessor:
                                 history=req.history,
                                 env=req.env,
                                 status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                                prev=deepcopy(req),
+                                prev=None if DEBUG == 0 else deepcopy(req),
                             ),
                             req_queue=req_queue,
                         )
@@ -455,7 +464,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -472,7 +481,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -482,8 +491,10 @@ class RequestProcessor:
             RequestStatus.ROLE_GUESS_GET_PROMPT,
             RequestStatus.ROLE_GUESS_CHECK_ERROR,
         ]:
-            role = req.env.get_role(req.player_idx)[1]
-            if not self.to_guess_role or role == "Merlin":
+            role = req.history["roles"][req.player_idx][1]
+            if (
+                not self.to_guess_role or role == "Merlin"
+            ) and "to_summarize" not in req.buffer:
                 if not self.to_guess_role:
                     if self.logger:
                         self.logger.debug(
@@ -500,7 +511,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -512,7 +523,7 @@ class RequestProcessor:
             if len(req.history["role_guess"]) < n_round:
                 req.history["role_guess"].append({})
             if (
-                req.to_forward
+                "to_summarize" not in req.buffer
                 and req.player_idx in req.history["role_guess"][n_round - 1]
             ):
                 self.logger.debug(
@@ -527,7 +538,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -565,7 +576,26 @@ class RequestProcessor:
                             "tgt_role": req.buffer["tgt_role"],
                         }
                     )
-                if req.to_forward:
+                if "to_summarize" in req.buffer:
+                    player_idx = req.buffer["to_summarize"]
+                    self.process_req(
+                        req=Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=req.game_idx,
+                            player_idx=player_idx,
+                            history=req.history,
+                            env=req.env,
+                            status=RequestStatus.SUMMARIZE_GET_PROMPT,
+                            prev=None if DEBUG == 0 else deepcopy(req),
+                        ),
+                        req_queue=req_queue,
+                    )
+                    if self.logger:
+                        self.logger.debug(
+                            f"Processed second level role guess order from {player_idx}. Created a summary request for him. {req}"
+                        )
+                else:
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -575,7 +605,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -592,7 +622,7 @@ class RequestProcessor:
                         status=status,
                         buffer=req.buffer,
                         to_forward=req.to_forward,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -614,7 +644,7 @@ class RequestProcessor:
                         history=req.history,
                         env=req.env,
                         status=RequestStatus.SUMMARIZE_GET_PROMPT,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     ),
                     req_queue=req_queue,
                 )
@@ -628,64 +658,12 @@ class RequestProcessor:
 
             if req.player_idx in req.history["role_belief"][n_round - 1]:
                 raise ValueError(
-                    f"status = {req.status} but role belief  is done for game {req.game_idx} round {n_round-1}."
+                    f"status = {req.status} but role belief  is done for game {req.game_idx} round {n_round-1}. {req}"
                 )
 
             prompt, status = current_agent.guess_belief(
                 req, use_team_prompt=self.use_team_prompt
             )
-            if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
-                role = req.env.get_role(req.player_idx)[1]
-                tgt_role: str = req.env.get_role(req.buffer["tgt_player_i"])[1]
-                good_roles: List[str] = [
-                    role[1] for role in req.env.get_roles() if role[2]
-                ]
-                bad_roles: List[str] = [
-                    role[1] for role in req.env.get_roles() if not role[2]
-                ]
-                if tgt_role == "Merlin":
-                    if self.logger:
-                        self.logger.debug(
-                            "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
-                        )
-                elif role in good_roles:
-                    self.process_req(
-                        req=Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=req.game_idx,
-                            player_idx=req.buffer["tgt_player_i"],
-                            history=req.history,
-                            env=req.env,
-                            to_forward=False,
-                            status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                            args={"tgt_player_i": req.player_idx},
-                            prev=deepcopy(req),
-                        ),
-                        req_queue=req_queue,
-                    )
-                else:  # evil team
-                    if tgt_role in bad_roles:
-                        if self.logger:
-                            self.logger.debug(
-                                f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
-                            )
-                    else:
-                        self.process_req(
-                            req=Request(
-                                prompt=None,
-                                resp=None,
-                                game_idx=req.game_idx,
-                                player_idx=req.buffer["tgt_player_i"],
-                                history=req.history,
-                                env=req.env,
-                                to_forward=False,
-                                status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                                args={"tgt_player_i": req.player_idx},
-                                prev=deepcopy(req),
-                            ),
-                            req_queue=req_queue,
-                        )
 
             if status == RequestStatus.ROLE_BELIEF_SUCCEED:
                 resp = req.resp
@@ -697,19 +675,83 @@ class RequestProcessor:
                     "tgt_player": req.buffer["tgt_player_i"],
                     "tgt_role": req.buffer["tgt_role"],
                 }
-                self.process_req(
-                    req=Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=req.game_idx,
-                        player_idx=req.player_idx,
-                        history=req.history,
-                        env=req.env,
-                        status=RequestStatus.SUMMARIZE_GET_PROMPT,
-                        prev=deepcopy(req),
-                    ),
-                    req_queue=req_queue,
-                )
+
+                to_forward = True
+                # role = req.history["roles"][req.player_idx][1]
+                # tgt_role: str = req.history["roles"][
+                #     req.buffer["tgt_player_i"]
+                # ][1]
+                # good_roles: List[str] = [
+                #     role[1] for role in req.history["roles"] if role[2]
+                # ]
+                # bad_roles: List[str] = [
+                #     role[1] for role in req.history["roles"] if not role[2]
+                # ]
+                # if tgt_role == "Merlin":
+                #     if self.logger:
+                #         self.logger.debug(
+                #             "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
+                #         )
+                # elif role in good_roles:
+                #     self.process_req(
+                #         req=Request(
+                #             prompt=None,
+                #             resp=None,
+                #             game_idx=req.game_idx,
+                #             player_idx=req.buffer["tgt_player_i"],
+                #             history=req.history,
+                #             env=req.env,
+                #             status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                #             args={"tgt_player_i": req.player_idx},
+                #             prev=None if DEBUG == 0 else deepcopy(req),
+                #             buffer={"to_summarize": req.player_idx},
+                #         ),
+                #         req_queue=req_queue,
+                #     )
+                #     # wait for the role guess to create summarize
+                #     to_forward = False
+                # else:  # evil team
+                #     if tgt_role in bad_roles:
+                #         if self.logger:
+                #             self.logger.debug(
+                #                 f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
+                #             )
+                #     else:
+                #         self.process_req(
+                #             req=Request(
+                #                 prompt=None,
+                #                 resp=None,
+                #                 game_idx=req.game_idx,
+                #                 player_idx=req.buffer["tgt_player_i"],
+                #                 history=req.history,
+                #                 env=req.env,
+                #                 status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                #                 args={"tgt_player_i": req.player_idx},
+                #                 prev=None if DEBUG == 0 else deepcopy(req),
+                #                 buffer={"to_summarize": req.player_idx},
+                #             ),
+                #             req_queue=req_queue,
+                #         )
+                #         # wait for the role guess to create summarize
+                #         to_forward = False
+                if to_forward:
+                    self.process_req(
+                        req=Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=req.game_idx,
+                            player_idx=req.player_idx,
+                            history=req.history,
+                            env=req.env,
+                            status=RequestStatus.SUMMARIZE_GET_PROMPT,
+                            prev=None if DEBUG == 0 else deepcopy(req),
+                        ),
+                        req_queue=req_queue,
+                    )
+                elif self.logger:
+                    self.logger.debug(
+                        f"Role belief generate another role quess request. Therefore, we will wait it to generate summarize request for me. {req}"
+                    )
                 return
             else:
                 req_queue.append(
@@ -722,7 +764,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -731,23 +773,49 @@ class RequestProcessor:
             RequestStatus.SUMMARIZE_CHECK_ERROR,
         ]:
             if not use_summary:
-                if self.logger:
-                    self.logger.debug(
-                        f"`use_summary` is not specified, routing request to `team_proposal`. {req}"
+                self.n_summaries[req.game_idx] += 1
+                if self.n_summaries[req.game_idx] == n_player:
+                    # if DEBUG in [1, 2]:
+                    #     filtered_reqs = [
+                    #         _req
+                    #         for _req in self.cur_queue
+                    #         if _req.game_idx == req.game_idx
+                    #         and _req.player_idx == req.player_idx
+                    #     ]
+                    #     if len(filtered_reqs) != 0:
+                    #         self.logger.debug(
+                    #             f"Have {len(filtered_reqs)} reqs for {req.game_idx} at summary stage. {req}"
+                    #         )
+                    #         self.logger.debug(
+                    #             "\n\n".join(
+                    #                 [str(_req) for _req in filtered_reqs]
+                    #             )
+                    #         )
+                    #         raise ValueError()
+                    if self.logger:
+                        self.logger.debug(
+                            f"`use_summary` is not specified. {self.n_summaries[req.game_idx]} players reached this round so we route request to `team_proposal`. {req}"
+                        )
+                    self.n_summaries[req.game_idx] = 0
+                    leader: int = req.history["leaders"][-1]
+                    self.process_req(
+                        req=Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=req.game_idx,
+                            player_idx=leader,
+                            history=req.history,
+                            env=req.env,
+                            status=RequestStatus.TEAM_PROPOSAL_GET_PROMPT,
+                            prev=None if DEBUG == 0 else deepcopy(req),
+                        ),
+                        req_queue=req_queue,
                     )
-                self.process_req(
-                    req=Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=req.game_idx,
-                        player_idx=req.player_idx,
-                        history=req.history,
-                        env=req.env,
-                        status=RequestStatus.TEAM_PROPOSAL_GET_PROMPT,
-                        prev=deepcopy(req),
-                    ),
-                    req_queue=req_queue,
-                )
+                else:
+                    if self.logger:
+                        self.logger.debug(
+                            f"`use_summary` is not specified. {self.n_summaries} players reached only so we will wait. {req}"
+                        )
                 return
             if self.logger and RequestStatus.SUMMARIZE_GET_PROMPT:
                 self.logger.debug(
@@ -787,7 +855,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_PROPOSAL_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -803,7 +871,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -850,7 +918,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_VOTE_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -866,7 +934,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -919,7 +987,7 @@ class RequestProcessor:
                                 history=req.history,
                                 env=req.env,
                                 status=RequestStatus.QUEST_VOTE_GET_PROMPT,
-                                prev=deepcopy(req),
+                                prev=None if DEBUG == 0 else deepcopy(req),
                             ),
                             req_queue=req_queue,
                         )
@@ -936,7 +1004,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -954,7 +1022,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -1016,7 +1084,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.ASSASSIN_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -1033,7 +1101,7 @@ class RequestProcessor:
                             history=req.history,
                             env=req.env,
                             status=RequestStatus.TEAM_DISCUSSION_GET_PROMPT,
-                            prev=deepcopy(req),
+                            prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
@@ -1056,7 +1124,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -1099,7 +1167,7 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        prev=deepcopy(req),
+                        prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
                 return
@@ -1475,11 +1543,13 @@ def main(
         count = 0
         while reqs:
             if DEBUG == 2:
-                with open(f"outputs/reqs_{req_round_i}.pkl", "wb") as f:
-                    pickle.dump(reqs, f)
+                with open(f"outputs/reqs_{req_round_i}.json", "w") as f:
+                    json.dump([req.to_dict() for req in reqs], f, indent=4)
             req_round_i += 1
             new_reqs = []
             for req in reqs:
+                if DEBUG in [1, 2]:
+                    req_processor._set_curr_queue(reqs)
                 req_processor.process_req(
                     req=req,
                     req_queue=new_reqs,
@@ -1533,6 +1603,7 @@ def main(
                                         f"http://localhost:{model_names[model_i]['port']}/v1",
                                     )
                                 )
+                                break
                     assert len(args) == len(reqs)
                     p = Pool(500)
                     outputs = p.starmap(wrapper, args)

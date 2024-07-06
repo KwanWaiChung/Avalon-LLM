@@ -129,7 +129,7 @@ class VllmAgent:
                 self._get_prompt_prefix(
                     player_id=req.player_idx,
                     history=req.history,
-                    player_list=req.env.get_roles(),
+                    player_list=req.history["roles"],
                 )
                 + " "
                 + TEAM_VOTE.replace(
@@ -267,7 +267,7 @@ class VllmAgent:
                 self._get_prompt_prefix(
                     player_id=req.player_idx,
                     history=req.history,
-                    player_list=req.env.get_roles(),
+                    player_list=req.history["roles"],
                 )
                 + " "
                 + VOTE_MISSION_ACTION.replace(
@@ -399,13 +399,13 @@ class VllmAgent:
         Returns:
             int: The id of the player to assassinate. The id is in the range [0, num_players).
         """
-        num_players = len(req.env.get_roles())
+        num_players = len(req.history["roles"])
         if req.status == RequestStatus.ASSASSIN_GET_PROMPT:
             prompt = (
                 self._get_prompt_prefix(
                     player_id=req.player_idx,
                     history=req.history,
-                    player_list=req.env.get_roles(),
+                    player_list=req.history["roles"],
                 )
                 + "\n\n"
                 + ASSASSINATION_PROMPT.replace(
@@ -565,7 +565,7 @@ class VllmAgent:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
                 history=req.history,
-                player_list=req.env.get_roles(),
+                player_list=req.history["roles"],
             )
             prompt = prompt + " " + SUMMARIZE
             req.buffer["msg"] = [{"role": "user", "content": prompt}]
@@ -642,7 +642,7 @@ class VllmAgent:
             prompt = self._get_prompt_prefix(
                 player_id=player_id,
                 history=req.history,
-                player_list=req.env.get_roles(),
+                player_list=req.history["roles"],
             )
             if player_id == team_leader_id:
                 prompt += " You are the Quest leader of this round."
@@ -742,12 +742,12 @@ class VllmAgent:
         req,
     ) -> Dict[str, Union[str, List[int]]]:
         team_size = req.env.get_team_size()
-        n_players = len(req.env.get_roles())
+        n_players = len(req.history["roles"])
         if req.status == RequestStatus.TEAM_PROPOSAL_GET_PROMPT:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
                 history=req.history,
-                player_list=req.env.get_roles(),
+                player_list=req.history["roles"],
             )
             prompt += " " + PROPOSE_TEAM_PROMPT.replace(
                 "{num_player}", str(team_size)
@@ -908,7 +908,7 @@ class VllmAgent:
                     LOGGER.debug(err_msg + f" Trial: {req.buffer['trial']}")
                     messages = req.buffer["msg"]
                     messages.append({"role": "assistant", "content": req.resp})
-                    n_players = len(req.env.get_roles())
+                    n_players = len(req.history["roles"])
                     messages.append(
                         {
                             "role": "user",
@@ -1276,10 +1276,10 @@ class VllmAgent:
         tgt_role = req.tgt_role
         tgt_player_i = req.tgt_player_i
         # good_roles: List[str] = [
-        #     role[1] for role in req.env.get_roles() if role[2]
+        #     role[1] for role in req.history['roles'] if role[2]
         # ]
         # bad_roles: List[str] = [
-        #     role[1] for role in req.env.get_roles() if not role[2]
+        #     role[1] for role in req.history['roles'] if not role[2]
         # ]
         if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
             if role[1] == "Merlin":
@@ -1515,13 +1515,13 @@ class VllmAgent:
 
         """
         n_rounds_to_skip = 0
-        n_players = len(req.env.get_roles())
+        n_players = len(req.history["roles"])
         role_name: str = req.history["roles"][req.player_idx][1]
         good_roles: List[str] = [
-            role[1] for role in req.env.get_roles() if role[2]
+            role[1] for role in req.history["roles"] if role[2]
         ]
         bad_roles: List[str] = [
-            role[1] for role in req.env.get_roles() if not role[2]
+            role[1] for role in req.history["roles"] if not role[2]
         ]
         if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
             if "tgt_player_i" in req.args:
@@ -1538,7 +1538,7 @@ class VllmAgent:
                 # sample a false role
                 if self.seeder.random() < 0.5:
                     tgt_roles = set(
-                        [role[1] for role in req.env.get_roles()]
+                        [role[1] for role in req.history["roles"]]
                     ) - set([tgt_role])
                     tgt_role = self.seeder.choice(list(tgt_roles))
             elif role_name in bad_roles:
@@ -1557,7 +1557,7 @@ class VllmAgent:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
                 history=req.history,
-                player_list=req.env.get_roles(),
+                player_list=req.history["roles"],
             )
             included_roles = []
             if not to_guess_multiple_player:

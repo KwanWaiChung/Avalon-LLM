@@ -16,6 +16,29 @@ MODELS = {
         "full_name": "Llama-3-Instruct-8B",
         "template": "llama-3",
     },
+    "llama3-8b-1": {
+        "path": {
+            "kf": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "ft": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "4090": "/HOME/scw6afb/run/llm_models/Meta-Llama-3-8B-Instruct",
+        }[SERVER],
+        "full_name": "Llama-3-Instruct-8B",
+        "template": "llama-3",
+    },
+    "llama3-8b-2": {
+        "path": {
+            "kf": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "ft": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "4090": "/HOME/scw6afb/run/llm_models/Meta-Llama-3-8B-Instruct",
+        }[SERVER],
+        "full_name": "Llama-3-Instruct-8B",
+        "template": "llama-3",
+    },
+    "qwen2-7b": {
+        "path": "Qwen/Qwen2-7B-Instruct",
+        "full_name": "Qwen-2-Instruct-7b",
+        "template": "qwen-7b-chat",
+    },
     "gemma2-9b": {
         "path": "google/gemma-2-9b-it",
         "full_name": "google/gemma-2-9b-it",
