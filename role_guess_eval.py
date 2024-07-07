@@ -10,46 +10,12 @@ from fastchat.conversation import get_conv_template
 from src.server.tasks.avalon.agents.my_vllm_agent import VllmAgent
 from src.server.tasks.avalon.my_prompts import GUESS_TEAM_PROMPT
 from src.utils.vllm_misc import RequestStatus
-from typing import Dict, Any
+from typing import Dict, Any, Literal
 from src.utils.logger import get_logger
 from src.utils.constants import (
-    ROLE_GUESS_RESULT_DIR,
     MODELS,
     ROLE_GUESS_OUTPUT_DIR,
 )
-
-
-def calculate_metrics(predictions, gold_labels):
-    true_positives = sum(
-        [p == 1 and g == 1 for p, g in zip(predictions, gold_labels)]
-    )
-    true_negatives = sum(
-        [p == 0 and g == 0 for p, g in zip(predictions, gold_labels)]
-    )
-    false_positives = sum(
-        [p == 1 and g == 0 for p, g in zip(predictions, gold_labels)]
-    )
-    false_negatives = sum(
-        [p == 0 and g == 1 for p, g in zip(predictions, gold_labels)]
-    )
-
-    precision = (
-        true_positives / (true_positives + false_positives)
-        if true_positives + false_positives > 0
-        else 0
-    )
-    recall = (
-        true_positives / (true_positives + false_negatives)
-        if true_positives + false_negatives > 0
-        else 0
-    )
-    f1 = (
-        2 * (precision * recall) / (precision + recall)
-        if precision + recall > 0
-        else 0
-    )
-    accuracy = (true_positives + true_negatives) / len(predictions)
-    return precision, recall, f1, accuracy
 
 
 class Request:
@@ -90,7 +56,6 @@ def main(
     in_fn: str,
     model_name: str,
     out_fn: str = None,
-    result_fn: str = None,
     seed: int = 111,
     temperature=0,
     top_p=1,
@@ -102,9 +67,15 @@ def main(
     include_prev_disc: bool = True,
     only_servant_guess: bool = False,
     guess_belief: bool = False,
+    use_team_prompt: bool = False,
     n_games: int = -1,
     debug: bool = False,
 ):
+    """
+    Args:
+        use_team_prompt: Whether to use a prompt that asks the model to
+            guess the team of a player. Defaults to False.
+    """
     if not debug:
         from vllm import LLM, SamplingParams
     seeder = random.Random(seed)
@@ -117,10 +88,6 @@ def main(
     if out_fn is None:
         out_fn = os.path.join(
             ROLE_GUESS_OUTPUT_DIR, f"{model_name}_role-guess-eval.json"
-        )
-    if result_fn is None:
-        result_fn = os.path.join(
-            ROLE_GUESS_RESULT_DIR, f"{model_name}_role-guess-eval.json"
         )
 
     reqs = []
@@ -151,6 +118,39 @@ def main(
                         if i != player_idx
                     ]
                 )
+                tgt2src.setdefault(tgt_player_i, []).append(player_idx)
+                if use_team_prompt:
+                    new_history = {
+                        "leaders": history["leaders"][: round_i + 1],
+                        "team_discs": history["team_discs"][: round_i + 1],
+                        "team_props": history["team_props"][:round_i],
+                        "team_votes": history["team_votes"][:round_i],
+                        "quest_votes": history["quest_votes"][:round_i],
+                        "role_guess": history["role_guess"][:round_i],
+                        "role_belief": history["role_belief"][:round_i],
+                        "summaries": history["summaries"][:round_i],
+                        "assassin": history["assassin"],
+                        "roles": history["roles"],
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "n_error": {model_name: 0},
+                        "id": history["id"],
+                        "models": [model_name] * len(history["roles"]),
+                    }
+                    req = Request(
+                        prompt=None,
+                        resp=None,
+                        game_idx=game_i,
+                        player_idx=player_idx,
+                        round_idx=round_i,
+                        tgt_role=None,
+                        tgt_player_i=tgt_player_i,
+                        history=new_history,
+                        status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                    )
+                    reqs.append(req)
+                    continue
+
                 if role[2]:  # Good player
                     # randomly pick another player
                     # choose all roles
@@ -166,7 +166,6 @@ def main(
                     tgt_roles = set(tgt_roles)
                 else:
                     tgt_roles = ["Percival", "Servant", "Merlin"]
-                tgt2src.setdefault(tgt_player_i, []).append(player_idx)
                 for tgt_role in tgt_roles:
                     new_history = {
                         "leaders": history["leaders"][: round_i + 1],
@@ -302,21 +301,41 @@ def main(
                 prompt, status = agent.guess_role_for_eval(
                     req=req,
                     to_guess_multiple_player=False,
+                    use_team_prompt=use_team_prompt,
                 )
                 if status == RequestStatus.ROLE_GUESS_SUCCEED:
-                    role_guess_res.setdefault(req.game_idx, {}).setdefault(
-                        req.player_idx, {}
-                    ).setdefault(req.round_idx, {})[req.tgt_role] = {
-                        "score": int(req.resp["score"]),
-                        "tgt_real_role": req.history["roles"][
-                            req.tgt_player_i
-                        ][1],
-                        "tgt_player_i": req.tgt_player_i,
-                        "src_role": req.history["roles"][req.player_idx][1],
-                        "prompt": prompt,
-                        "output": req.resp,
-                        "n_error": req.history["n_error"],
-                    }
+                    if use_team_prompt:
+                        role_guess_res.setdefault(req.game_idx, {}).setdefault(
+                            req.player_idx, {}
+                        )[req.round_idx] = {
+                            "score": int(req.resp["score"]),
+                            "tgt_real_role": req.history["roles"][
+                                req.tgt_player_i
+                            ][1],
+                            "tgt_player_i": req.tgt_player_i,
+                            "src_role": req.history["roles"][req.player_idx][
+                                1
+                            ],
+                            "prompt": prompt,
+                            "output": req.resp,
+                            "n_error": req.history["n_error"],
+                        }
+                    else:
+                        role_guess_res.setdefault(req.game_idx, {}).setdefault(
+                            req.player_idx, {}
+                        ).setdefault(req.round_idx, {})[req.tgt_role] = {
+                            "score": int(req.resp["score"]),
+                            "tgt_real_role": req.history["roles"][
+                                req.tgt_player_i
+                            ][1],
+                            "tgt_player_i": req.tgt_player_i,
+                            "src_role": req.history["roles"][req.player_idx][
+                                1
+                            ],
+                            "prompt": prompt,
+                            "output": req.resp,
+                            "n_error": req.history["n_error"],
+                        }
                 elif req.buffer["trial"] < max_trial:
                     # create another req
                     new_reqs.append(
@@ -414,124 +433,12 @@ def main(
         for req, resp in zip(reqs, resps):
             req.resp = resp.outputs[0].text
 
-    # get the predicted role and calculate acc
-    seeder = random.Random(seed)
-    role_belief_acc = []
-    # role guess
-    n_samples = 0
-    evil_roles = [role[1] for role in data[0]["roles"] if not role[2]]
-    preds, golds = [], []
-    for game_idx, players in role_guess_res.items():
-        for player_idx, rounds in players.items():
-            for round_idx, tgt_roles in rounds.items():
-                good_score = 0
-                evil_score = 0
-                gold = None
-                for role, score in tgt_roles.items():
-                    if role in evil_roles:
-                        evil_score += score["score"]
-                    else:
-                        good_score += score["score"]
-                    gold = score["tgt_real_role"] in evil_roles
-                pred = evil_score > good_score
-                tgt_roles["pred"] = pred
-                tgt_roles["gold"] = gold
-                preds.append(pred)
-                golds.append(gold)
-                # max_score = max(score["score"] for score in tgt_roles.values())
-                # max_roles = [
-                #     key
-                #     for key, value in tgt_roles.items()
-                #     if value["score"] == max_score
-                # ]
-                # max_role = seeder.choice(max_roles)
-                # tgt_roles["pred_role"] = max_role
-                # role_belief_acc.append(
-                #     max_role == tgt_roles[max_role]["tgt_real_role"]
-                # )
-                n_samples += 1
-    prec, rec, f1, acc = calculate_metrics(preds, golds)
-    print(f"Role guess has {n_samples} samples.")
-
-    scores = {
-        "role_guess": {
-            "precision": prec,
-            "recall": rec,
-            "f1": f1,
-            "acc": acc,
-        }
-    }
-    print(f"Role guess precision: {prec:.2f}")
-    print(f"Role guess recall: {rec:.2f}")
-    print(f"Role guess f1 score: {f1:.2f}")
-    print(f"Role guess accuracy: {acc:.2f}")
-
-    # belief guess
-    if guess_belief:
-        n_samples = 0
-        preds, golds = [], []
-        for game_idx, players in role_belief_res.items():
-            for player_idx, rounds in players.items():
-                for round_idx, tgt_roles in rounds.items():
-                    good_score = 0
-                    evil_score = 0
-                    for role, score in tgt_roles.items():
-                        if role in evil_roles:
-                            evil_score += score["score"]
-                        else:
-                            good_score += score["score"]
-                        pred = evil_score > good_score
-                    tgt_player_i = score["tgt_player_i"]
-                    gold_pred = role_guess_res[game_idx][tgt_player_i][
-                        round_idx
-                    ]
-                    gold = gold_pred["pred"]
-                    assert (
-                        list(gold_pred.values())[0]["tgt_player_i"]
-                        == player_idx
-                    )
-                    preds.append(pred)
-                    golds.append(gold)
-                    n_samples += 1
-
-                    # max_score = max(
-                    #     score["score"] for score in tgt_roles.values()
-                    # )
-                    # max_roles = [
-                    #     key
-                    #     for key, value in tgt_roles.items()
-                    #     if value["score"] == max_score
-                    # ]
-                    # max_role = seeder.choice(max_roles)
-                    # tgt_player_i = tgt_roles[max_role]["tgt_player_i"]
-
-                    # gold_pred = role_guess_res[game_idx][tgt_player_i][
-                    #     round_idx
-                    # ]
-                    # gold_role = gold_pred["pred_role"]
-                    # assert gold_pred[gold_role]["tgt_player_i"] == player_idx
-                    # role_belief_acc.append(max_role == gold_role)
-                    # n_samples += 1
-        prec, rec, f1, acc = calculate_metrics(preds, golds)
-        scores["role_belief"] = {
-            "precision": prec,
-            "recall": rec,
-            "f1": f1,
-            "acc": acc,
-        }
-        print(f"Role belief has {n_samples} samples.")
-        print(f"Role belief precision: {prec:.2f}")
-        print(f"Role belief recall: {rec:.2f}")
-        print(f"Role belief f1 score: {f1:.2f}")
-        print(f"Role belief accuracy: {acc:.2f}")
-
     # done and save
     if not debug:
         args_dict = {
             "in_fn": in_fn,
             "model_name": model_name,
             "out_fn": out_fn,
-            "result_fn": result_fn,
             "seed": seed,
             "temperature": temperature,
             "top_p": top_p,
@@ -544,6 +451,7 @@ def main(
             "only_servant_guess": only_servant_guess,
             "guess_belief": guess_belief,
             "n_games": n_games,
+            "use_team_prompt": use_team_prompt,
             "debug": debug,
         }
         os.makedirs(os.path.dirname(out_fn), exist_ok=True)
@@ -558,11 +466,6 @@ def main(
                 indent=4,
             )
         print(f"Output saved to {out_fn}")
-
-        os.makedirs(os.path.dirname(result_fn), exist_ok=True)
-        with open(result_fn, "w") as f:
-            json.dump(scores, f, indent=4)
-        print(f"Scores saved to {result_fn}")
 
     # Merlin won't guess
     # good players pick any other

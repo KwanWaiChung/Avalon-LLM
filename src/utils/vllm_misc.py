@@ -53,7 +53,7 @@ class Request:
         args: Dict[str, Any] = None,
         buffer: Dict[str, Any] = None,
         round_idx: int = None,
-        prev=None,
+        prev: "Request" = None,
     ):
         self.id = Request._id_counter
         Request._id_counter += 1
