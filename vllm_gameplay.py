@@ -492,9 +492,9 @@ class RequestProcessor:
             RequestStatus.ROLE_GUESS_CHECK_ERROR,
         ]:
             role = req.history["roles"][req.player_idx][1]
-            if (
-                not self.to_guess_role or role == "Merlin"
-            ) and "to_summarize" not in req.buffer:
+            if len(req.history["role_guess"]) < n_round:
+                req.history["role_guess"].append({})
+            if not self.to_guess_role or role == "Merlin":
                 if not self.to_guess_role:
                     if self.logger:
                         self.logger.debug(
@@ -520,10 +520,8 @@ class RequestProcessor:
                 self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Role guess phase. Current player is Player {req.player_idx}."
                 )
-            if len(req.history["role_guess"]) < n_round:
-                req.history["role_guess"].append({})
             if (
-                "to_summarize" not in req.buffer
+                "guess_belief" not in req.buffer
                 and req.player_idx in req.history["role_guess"][n_round - 1]
             ):
                 self.logger.debug(
@@ -576,8 +574,8 @@ class RequestProcessor:
                             "tgt_role": req.buffer["tgt_role"],
                         }
                     )
-                if "to_summarize" in req.buffer:
-                    player_idx = req.buffer["to_summarize"]
+                if "guess_belief" in req.buffer:
+                    player_idx = req.buffer["tgt_player_i"]
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -586,14 +584,15 @@ class RequestProcessor:
                             player_idx=player_idx,
                             history=req.history,
                             env=req.env,
-                            status=RequestStatus.SUMMARIZE_GET_PROMPT,
+                            status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+                            args=req.buffer["guess_belief"],
                             prev=None if DEBUG == 0 else deepcopy(req),
                         ),
                         req_queue=req_queue,
                     )
                     if self.logger:
                         self.logger.debug(
-                            f"Processed second level role guess order from {player_idx}. Created a summary request for him. {req}"
+                            f"Processed second level role guess order from {player_idx}. Created a guess belief request for him. {req}"
                         )
                 else:
                     self.process_req(
@@ -664,6 +663,83 @@ class RequestProcessor:
             prompt, status = current_agent.guess_belief(
                 req, use_team_prompt=self.use_team_prompt
             )
+            role = req.history["roles"][req.player_idx][1]
+            tgt_player_i = req.buffer["tgt_player_i"]
+            tgt_role: str = req.history["roles"][tgt_player_i][1]
+            good_roles: List[str] = [
+                role[1] for role in req.history["roles"] if role[2]
+            ]
+            bad_roles: List[str] = [
+                role[1] for role in req.history["roles"] if not role[2]
+            ]
+            # if DEBUG in [1, 2]:
+            #     if n_round >= len(req.history["role_guess"]):
+            #         self.logger.debug(
+            #             f"`role_guess` is shorter than expected. Current req: {req}, Prev req: {req.prev}"
+            #         )
+
+            if tgt_role == "Merlin":
+                if self.logger:
+                    self.logger.debug(
+                        "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
+                    )
+            elif tgt_player_i in req.history["role_guess"][
+                n_round - 1
+            ] and req.player_idx in [
+                guess["tgt_player"]
+                for guess in req.history["role_guess"][n_round - 1][
+                    tgt_player_i
+                ]
+            ]:
+                if self.logger:
+                    self.logger.debug(
+                        f"ground truth role guess has established for {req}"
+                    )
+            elif role in good_roles:
+                self.process_req(
+                    req=Request(
+                        prompt=None,
+                        resp=None,
+                        game_idx=req.game_idx,
+                        player_idx=req.buffer["tgt_player_i"],
+                        history=req.history,
+                        env=req.env,
+                        status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                        args={"tgt_player_i": req.player_idx},
+                        prev=None if DEBUG == 0 else deepcopy(req),
+                        buffer={"guess_belief": req.args},
+                    ),
+                    req_queue=req_queue,
+                )
+                # let it come back to this role belief
+                return
+                # wait for the role guess to create summarize
+                to_forward = False
+            else:  # evil team
+                if tgt_role in bad_roles:
+                    if self.logger:
+                        self.logger.debug(
+                            f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
+                        )
+                else:
+                    self.process_req(
+                        req=Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=req.game_idx,
+                            player_idx=req.buffer["tgt_player_i"],
+                            history=req.history,
+                            env=req.env,
+                            status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                            args={"tgt_player_i": req.player_idx},
+                            prev=None if DEBUG == 0 else deepcopy(req),
+                            buffer={"guess_belief": req.args},
+                        ),
+                        req_queue=req_queue,
+                    )
+                    return
+                    # wait for the role guess to create summarize
+                    to_forward = False
 
             if status == RequestStatus.ROLE_BELIEF_SUCCEED:
                 resp = req.resp
@@ -677,63 +753,7 @@ class RequestProcessor:
                 }
 
                 to_forward = True
-                # role = req.history["roles"][req.player_idx][1]
-                # tgt_role: str = req.history["roles"][
-                #     req.buffer["tgt_player_i"]
-                # ][1]
-                # good_roles: List[str] = [
-                #     role[1] for role in req.history["roles"] if role[2]
-                # ]
-                # bad_roles: List[str] = [
-                #     role[1] for role in req.history["roles"] if not role[2]
-                # ]
-                # if tgt_role == "Merlin":
-                #     if self.logger:
-                #         self.logger.debug(
-                #             "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
-                #         )
-                # elif role in good_roles:
-                #     self.process_req(
-                #         req=Request(
-                #             prompt=None,
-                #             resp=None,
-                #             game_idx=req.game_idx,
-                #             player_idx=req.buffer["tgt_player_i"],
-                #             history=req.history,
-                #             env=req.env,
-                #             status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                #             args={"tgt_player_i": req.player_idx},
-                #             prev=None if DEBUG == 0 else deepcopy(req),
-                #             buffer={"to_summarize": req.player_idx},
-                #         ),
-                #         req_queue=req_queue,
-                #     )
-                #     # wait for the role guess to create summarize
-                #     to_forward = False
-                # else:  # evil team
-                #     if tgt_role in bad_roles:
-                #         if self.logger:
-                #             self.logger.debug(
-                #                 f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
-                #             )
-                #     else:
-                #         self.process_req(
-                #             req=Request(
-                #                 prompt=None,
-                #                 resp=None,
-                #                 game_idx=req.game_idx,
-                #                 player_idx=req.buffer["tgt_player_i"],
-                #                 history=req.history,
-                #                 env=req.env,
-                #                 status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                #                 args={"tgt_player_i": req.player_idx},
-                #                 prev=None if DEBUG == 0 else deepcopy(req),
-                #                 buffer={"to_summarize": req.player_idx},
-                #             ),
-                #             req_queue=req_queue,
-                #         )
-                #         # wait for the role guess to create summarize
-                #         to_forward = False
+
                 if to_forward:
                     self.process_req(
                         req=Request(
@@ -1620,11 +1640,7 @@ def main(
 
             for req, resp in zip(reqs, resps):
                 req.resp = resp.outputs[0].text
-                if (
-                    DEBUG == 0
-                    and model_name is not None
-                    and inference_strategy == "vllm"
-                ):
+                if model_name is not None and inference_strategy == "vllm":
                     req.history["input_tokens"] += len(resp.prompt_token_ids)
                     req.history["output_tokens"] += len(
                         resp.outputs[0].token_ids

@@ -2,6 +2,7 @@ import json
 import os
 import re
 import random
+from tqdm import tqdm
 from typing import Dict, List, Union
 from strictfire import StrictFire
 from transformers import AutoTokenizer
@@ -169,12 +170,11 @@ def get_quest_vote(
     return output
 
 
-def get_role_guess(
-    history,
-    round_i: int,
-    player_i: int,
-):
+def get_role_guess(history, round_i: int, player_i: int, use_team_vote: bool):
     role: str = history["roles"][player_i][1]
+    if use_team_vote and not history["roles"][player_i][2]:
+        # bad roles don't have to guess team
+        return None
     if isinstance(history["role_guess"][round_i], list):
         src_player_ids: List[int] = [
             turn["src_player"] for turn in history["role_guess"][round_i]
@@ -210,16 +210,21 @@ def get_role_guess(
             ensure_ascii=False,
         )
 
-    output = {
-        "instruction": prompt,
-        "output": resp,
-        "game_id": history["id"],
-        "round": round_i,
-        "player_id": player_i,
-        "player_role": role,
-        "phase": "role_guess",
-    }
-    return output
+    if (
+        not history["roles"][row["tgt_player"]][2]
+        and row["output"]["score"] > 5
+    ):
+        output = {
+            "instruction": prompt,
+            "output": resp,
+            "game_id": history["id"],
+            "round": round_i,
+            "player_id": player_i,
+            "player_role": role,
+            "phase": "role_guess",
+        }
+        return output
+    return None
 
 
 def get_role_belief(
@@ -240,7 +245,7 @@ def get_role_belief(
         return None
     src_player_i = src_player_ids.index(player_i)
     if isinstance(history["role_belief"][round_i], dict):
-        src_player_i = str(src_player_i)
+        src_player_i = str(player_i)
 
     role: str = history["roles"][player_i][1]
     prompt: str = history["role_belief"][round_i][src_player_i]["prompt"]
@@ -298,6 +303,10 @@ def main(
     fns: List[str],
     out_fn: str,
     tokenizer_path: str,
+    n_games: int = None,
+    use_team_vote: bool = False,
+    include_role_guess: bool = False,
+    include_role_belief: bool = False,
     max_input_len: int = float("inf"),
 ):
     if isinstance(fns, str):
@@ -305,7 +314,10 @@ def main(
     out_data = []
     for fn in fns:
         data = [json.loads(row) for row in open(fn)]
-        for row in data:
+        if n_games is not None:
+            data = data[:n_games]
+            print(f"Only use the first {n_games} games.")
+        for row in tqdm(data):
             if row["status"] != "Finished":
                 print("Found one row that is not finished.")
                 continue
@@ -324,10 +336,12 @@ def main(
                     )
                     out_data.append(output)
 
-                    output = get_summary(
-                        history=row, round_i=round_i, player_i=player_i
-                    )
-                    out_data.append(output)
+                    # summary
+                    if "summary" in row:
+                        output = get_summary(
+                            history=row, round_i=round_i, player_i=player_i
+                        )
+                        out_data.append(output)
 
                     # team prop
                     leader: int = row["leaders"][round_i]
@@ -352,20 +366,23 @@ def main(
                         out_data.append(output)
 
                     # role guess
-                    output = get_role_guess(
-                        history=row,
-                        round_i=round_i,
-                        player_i=player_i,
-                    )
-                    if output is not None:
-                        out_data.append(output)
+                    if include_role_guess:
+                        output = get_role_guess(
+                            history=row,
+                            round_i=round_i,
+                            player_i=player_i,
+                            use_team_vote=use_team_vote,
+                        )
+                        if output is not None:
+                            out_data.append(output)
 
                     # belief guess
-                    output = get_role_belief(
-                        history=row, round_i=round_i, player_i=player_i
-                    )
-                    if output is not None:
-                        out_data.append(output)
+                    if include_role_belief:
+                        output = get_role_belief(
+                            history=row, round_i=round_i, player_i=player_i
+                        )
+                        if output is not None:
+                            out_data.append(output)
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     for output in out_data:
