@@ -72,6 +72,18 @@ def wrapper(
     return output
 
 
+# for debugging purpose only
+def _get_all_prev(req, verbose=True):
+    res = []
+    while req.prev:
+        req = req.prev
+        k = f"{req.status}, player_idx={req.player_idx}, n_leaders={len(req.history['leaders'])}"
+        res.append(req)
+        if verbose:
+            print(k)
+    return res
+
+
 class Output:
     def __init__(self, text: str):
         self.text = text
@@ -138,6 +150,16 @@ class VllmStrategyWrapper:
         return outputs
 
 
+def construct_two_players_game(history, model_names, revert: bool = False):
+    # game 1
+    history["n_error"] = {model_name: 0 for model_name in model_names}
+    history["models"] = [
+        (model_names[0] if role[-1] == revert else model_names[1])
+        for role in history["roles"]
+    ]
+    return history
+
+
 class RequestProcessor:
     def __init__(
         self,
@@ -166,8 +188,9 @@ class RequestProcessor:
         self.n_finished_games = 0
         self.use_team_prompt = use_team_prompt
 
-        # use to block `get_summary` if `use_summary` is not used to
-        # maintain the same logic flow when `use_summary` is used.
+        # use to block and finish all role guess and belief before
+        # heading to summary
+        self.guess_and_belief_counter = defaultdict(int)
         self.n_summaries = defaultdict(int)
 
     def _set_curr_queue(self, queue: List[Request]):
@@ -251,25 +274,25 @@ class RequestProcessor:
                         ), f"Player {player_idx} should not have a summary in round {round_idx} of game {req.game_idx} as their model doesn't use summaries."
 
         # role guess check
-        if self.to_guess_role:
-            assert (
-                len(req.history["role_guess"]) == n_rounds
-            ), "Each round should have role guess."
-            for guess in req.history["role_guess"]:
-                assert (
-                    len(guess) == n_player - 1
-                ), f"Should have {n_player-1} guess at each round since Merlin is not included but received {len(guess)} guesses in game {req.game_idx}."
-                for p_guesses in guess.values():
-                    for p_guess in p_guesses:
-                        for k in [
-                            "output",
-                            "prompt",
-                            "src_player",
-                            "tgt_player",
-                        ]:
-                            assert (
-                                k in p_guess
-                            ), f"Should have key `{k}` in role guess but received {p_guess} in game {req.game_idx}."
+        # if self.to_guess_role:
+        #     assert (
+        #         len(req.history["role_guess"]) == n_rounds
+        #     ), "Each round should have role guess."
+        #     for guess in req.history["role_guess"]:
+        #         assert (
+        #             len(guess) == n_player - 1
+        #         ), f"Should have {n_player-1} guess at each round since Merlin is not included but received {len(guess)} guesses in game {req.game_idx}."
+        #         for p_guesses in guess.values():
+        #             for p_guess in p_guesses:
+        #                 for k in [
+        #                     "output",
+        #                     "prompt",
+        #                     "src_player",
+        #                     "tgt_player",
+        #                 ]:
+        #                     assert (
+        #                         k in p_guess
+        #                     ), f"Should have key `{k}` in role guess but received {p_guess} in game {req.game_idx}."
 
         # role belief check
         if self.to_guess_belief:
@@ -366,6 +389,79 @@ class RequestProcessor:
         ):
             raise ValueError(f"{status} should have phase=3.")
 
+    def _add_role_guess_and_belief(self, req, req_queue):
+        # if not role guess and role belief, send to summary
+        n_player = len(req.history["roles"])
+        if self.to_guess_role:
+            good_player_ids: List[int] = [
+                i
+                for i, role in enumerate(req.history["roles"])
+                if role[2] and role[1] != "Merlin"
+            ]
+            for i in good_player_ids:
+                for j in range(n_player):
+                    self.process_req(
+                        req=Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=req.game_idx,
+                            player_idx=i,
+                            history=req.history,
+                            env=req.env,
+                            status=RequestStatus.ROLE_GUESS_GET_PROMPT,
+                            prev=None if DEBUG == 0 else deepcopy(req),
+                            args={"tgt_player_i": j},
+                        ),
+                        req_queue=req_queue,
+                    )
+        elif self.logger:
+            self.logger.debug(
+                "Role guess is omitted since `to_guess_role` is not specified."
+            )
+
+        if self.to_guess_belief:
+            for i in range(n_player):
+                for j in range(n_player):
+                    if i == j:
+                        continue
+                    self.process_req(
+                        req=Request(
+                            prompt=None,
+                            resp=None,
+                            game_idx=req.game_idx,
+                            player_idx=i,
+                            history=req.history,
+                            env=req.env,
+                            status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
+                            prev=None if DEBUG == 0 else deepcopy(req),
+                            args={"tgt_player_i": j},
+                        ),
+                        req_queue=req_queue,
+                    )
+        elif self.logger:
+            self.logger.debug(
+                "Role belief is omitted since `to_guess_belief` is not specified."
+            )
+
+        if not self.to_guess_role and not self.to_guess_belief:
+            self.logger.debug(
+                "Since both `role_guess` and `role_belief` are not specified, routing to summarize"
+            )
+            for i in range(n_player):
+                self.process_req(
+                    req=Request(
+                        prompt=None,
+                        resp=None,
+                        game_idx=req.game_idx,
+                        player_idx=i,
+                        history=req.history,
+                        env=req.env,
+                        status=RequestStatus.SUMMARIZE_GET_PROMPT,
+                        prev=None if DEBUG == 0 else deepcopy(req),
+                    ),
+                    req_queue=req_queue,
+                )
+
     def process_req(
         self,
         req: Request,
@@ -394,22 +490,9 @@ class RequestProcessor:
             if not self.to_discuss:
                 if self.logger:
                     self.logger.debug(
-                        f"`to_discuss` is not specified, routing request to `guess_role`. {req}"
+                        f"`to_discuss` is not specified, routing to next stage. {req}"
                     )
-                for i in range(n_player):
-                    self.process_req(
-                        req=Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=req.game_idx,
-                            player_idx=req.player_idx,
-                            history=req.history,
-                            env=req.env,
-                            status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                            prev=None if DEBUG == 0 else deepcopy(req),
-                        ),
-                        req_queue=req_queue,
-                    )
+                self._add_role_guess_and_belief(req, req_queue)
                 return
             if (
                 self.logger
@@ -432,29 +515,8 @@ class RequestProcessor:
                 resp = req.resp
                 req.history["team_discs"][n_round - 1][player_id] = resp
                 if len(req.history["team_discs"][n_round - 1]) == n_player:
-                    for i in range(n_player):
-                        self.process_req(
-                            req=Request(
-                                prompt=None,
-                                resp=None,
-                                game_idx=req.game_idx,
-                                player_idx=i,
-                                history=req.history,
-                                env=req.env,
-                                status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                                prev=None if DEBUG == 0 else deepcopy(req),
-                            ),
-                            req_queue=req_queue,
-                        )
-                    return
+                    self._add_role_guess_and_belief(req, req_queue)
                 else:
-                    # debug
-                    if req.player_idx == 5:
-                        self.logger.warning(
-                            f"game idx={req.game_idx}, team_keys = {req.history['team_discs'][n_round-1].keys()}"
-                        )
-                        with open("outputs/debug.pkl", "wb") as f:
-                            pickle.dump(req, f)
                     self.process_req(
                         req=Request(
                             prompt=None,
@@ -468,9 +530,8 @@ class RequestProcessor:
                         ),
                         req_queue=req_queue,
                     )
-                    return
+                return
             elif status == RequestStatus.TEAM_DISCUSSION_CHECK_ERROR:
-                # status code must be 1
                 req_queue.append(
                     Request(
                         prompt=prompt,
@@ -492,55 +553,19 @@ class RequestProcessor:
             RequestStatus.ROLE_GUESS_CHECK_ERROR,
         ]:
             role = req.history["roles"][req.player_idx][1]
+            assert (
+                self.to_guess_role
+            ), "Team discussion should not send role guess requests."
             if len(req.history["role_guess"]) < n_round:
                 req.history["role_guess"].append({})
-            if not self.to_guess_role or role == "Merlin":
-                if not self.to_guess_role:
-                    if self.logger:
-                        self.logger.debug(
-                            f"`to_guess_role` is not specified, routing request to `guess_belief`. {req}"
-                        )
-                elif self.logger:
-                    self.logger.debug("Merlin is omited in role guessing.")
-                self.process_req(
-                    req=Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=req.game_idx,
-                        player_idx=req.player_idx,
-                        history=req.history,
-                        env=req.env,
-                        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                        prev=None if DEBUG == 0 else deepcopy(req),
-                    ),
-                    req_queue=req_queue,
-                )
-                return
-            if self.logger and RequestStatus.ROLE_GUESS_GET_PROMPT:
-                self.logger.debug(
-                    f"Game number: {req.game_idx}.  Round: {n_round}. Role guess phase. Current player is Player {req.player_idx}."
-                )
-            if (
-                "guess_belief" not in req.buffer
-                and req.player_idx in req.history["role_guess"][n_round - 1]
-            ):
-                self.logger.debug(
-                    f"status = {req.status} but role_guess is done. routing request to `guess_belief`. {req}"
-                )
-                self.process_req(
-                    req=Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=req.game_idx,
-                        player_idx=req.player_idx,
-                        history=req.history,
-                        env=req.env,
-                        status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                        prev=None if DEBUG == 0 else deepcopy(req),
-                    ),
-                    req_queue=req_queue,
-                )
-                return
+            if role == "Merlin" and self.logger:
+                self.logger.debug("Merlin is omited in role guessing.")
+            if req.status == RequestStatus.ROLE_GUESS_GET_PROMPT:
+                self.guess_and_belief_counter[req.game_idx] += 1
+                if self.logger:
+                    self.logger.debug(
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Role guess phase. Current player is Player {req.player_idx}. Counter is {self.guess_and_belief_counter[req.game_idx]}"
+                    )
 
             prompt, status = current_agent.guess_role(
                 req,
@@ -559,57 +584,53 @@ class RequestProcessor:
                 ):
                     if self.logger:
                         self.logger.debug(
-                            f"status = {req.status} but role_guess is done. Going to ignore this request."
+                            f"status = {req.status} but role_guess is done for round={n_round}. This shouldn't happen."
                         )
-                else:
-                    req.history["role_guess"][n_round - 1].setdefault(
-                        req.player_idx, []
-                    ).append(
-                        {
-                            "prompt": prompt,
-                            "output": resp,
-                            "init_resp": req.buffer["init_resp"],
-                            "src_player": req.player_idx,
-                            "tgt_player": req.buffer["tgt_player_i"],
-                            "tgt_role": req.buffer["tgt_role"],
-                        }
-                    )
-                if "guess_belief" in req.buffer:
-                    player_idx = req.buffer["tgt_player_i"]
-                    self.process_req(
-                        req=Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=req.game_idx,
-                            player_idx=player_idx,
-                            history=req.history,
-                            env=req.env,
-                            status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                            args=req.buffer["guess_belief"],
-                            prev=None if DEBUG == 0 else deepcopy(req),
+                        for i, _req in _get_all_prev(req):
+                            self.logger.debug(f"{i}: {req}")
+                    raise ValueError("Duplicate role geuss request.")
+                req.history["role_guess"][n_round - 1].setdefault(
+                    req.player_idx, []
+                ).append(
+                    {
+                        "prompt": prompt,
+                        "output": resp,
+                        "init_resp": req.buffer["init_resp"],
+                        "src_player": req.player_idx,
+                        "tgt_player": req.buffer["tgt_player_i"],
+                        "tgt_role": (
+                            req.buffer["tgt_role"]
+                            if not self.use_team_prompt
+                            else None
                         ),
-                        req_queue=req_queue,
+                    }
+                )
+                self.guess_and_belief_counter[req.game_idx] -= 1
+                if self.logger:
+                    self.logger.debug(
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Role guess succeed. Current player is Player {req.player_idx}. Counter is {self.guess_and_belief_counter[req.game_idx]}"
                     )
+                if self.guess_and_belief_counter[req.game_idx] == 0:
                     if self.logger:
                         self.logger.debug(
-                            f"Processed second level role guess order from {player_idx}. Created a guess belief request for him. {req}"
+                            f"Game number: {req.game_idx} has finished all role guess and belief inference. Routing to summarization."
                         )
-                else:
-                    self.process_req(
-                        req=Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=req.game_idx,
-                            player_idx=req.player_idx,
-                            history=req.history,
-                            env=req.env,
-                            status=RequestStatus.ROLE_BELIEF_GET_PROMPT,
-                            prev=None if DEBUG == 0 else deepcopy(req),
-                        ),
-                        req_queue=req_queue,
-                    )
+                    for i in range(n_player):
+                        self.process_req(
+                            req=Request(
+                                prompt=None,
+                                resp=None,
+                                game_idx=req.game_idx,
+                                player_idx=i,
+                                history=req.history,
+                                env=req.env,
+                                status=RequestStatus.SUMMARIZE_GET_PROMPT,
+                                prev=None if DEBUG == 0 else deepcopy(req),
+                            ),
+                            req_queue=req_queue,
+                        )
                 return
-            else:
+            else:  # get_prompt or error
                 req_queue.append(
                     Request(
                         prompt=prompt,
@@ -620,7 +641,6 @@ class RequestProcessor:
                         env=req.env,
                         status=status,
                         buffer=req.buffer,
-                        to_forward=req.to_forward,
                         prev=None if DEBUG == 0 else deepcopy(req),
                     )
                 )
@@ -629,151 +649,80 @@ class RequestProcessor:
             RequestStatus.ROLE_BELIEF_GET_PROMPT,
             RequestStatus.ROLE_BELIEF_CHECK_ERROR,
         ]:
-            if not self.to_guess_belief:
+            assert (
+                self.to_guess_belief
+            ), "Team discussion should not send role belief requests."
+            if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
+                self.guess_and_belief_counter[req.game_idx] += 1
                 if self.logger:
                     self.logger.debug(
-                        f"`to_guess_belief` is not specified, routing request to `summarize`. {req}"
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Belief guess phase. Current player is Player {req.player_idx}. Counter is {self.guess_and_belief_counter[req.game_idx]}"
                     )
-                self.process_req(
-                    req=Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=req.game_idx,
-                        player_idx=req.player_idx,
-                        history=req.history,
-                        env=req.env,
-                        status=RequestStatus.SUMMARIZE_GET_PROMPT,
-                        prev=None if DEBUG == 0 else deepcopy(req),
-                    ),
-                    req_queue=req_queue,
-                )
-                return
-            if self.logger and RequestStatus.ROLE_BELIEF_GET_PROMPT:
-                self.logger.debug(
-                    f"Game number: {req.game_idx}.  Round: {n_round}. Belief guess phase. Current player is Player {req.player_idx}."
-                )
             if len(req.history["role_belief"]) < n_round:
                 req.history["role_belief"].append({})
-
-            if req.player_idx in req.history["role_belief"][n_round - 1]:
-                raise ValueError(
-                    f"status = {req.status} but role belief  is done for game {req.game_idx} round {n_round-1}. {req}"
-                )
 
             prompt, status = current_agent.guess_belief(
                 req, use_team_prompt=self.use_team_prompt
             )
-            role = req.history["roles"][req.player_idx][1]
-            tgt_player_i = req.buffer["tgt_player_i"]
-            tgt_role: str = req.history["roles"][tgt_player_i][1]
-            good_roles: List[str] = [
-                role[1] for role in req.history["roles"] if role[2]
-            ]
-            bad_roles: List[str] = [
-                role[1] for role in req.history["roles"] if not role[2]
-            ]
-            # if DEBUG in [1, 2]:
-            #     if n_round >= len(req.history["role_guess"]):
-            #         self.logger.debug(
-            #             f"`role_guess` is shorter than expected. Current req: {req}, Prev req: {req.prev}"
-            #         )
-
-            if tgt_role == "Merlin":
-                if self.logger:
-                    self.logger.debug(
-                        "Since Merlin knows the role of all players, we did not add extra role guessing prompt."
-                    )
-            elif tgt_player_i in req.history["role_guess"][
-                n_round - 1
-            ] and req.player_idx in [
-                guess["tgt_player"]
-                for guess in req.history["role_guess"][n_round - 1][
-                    tgt_player_i
-                ]
-            ]:
-                if self.logger:
-                    self.logger.debug(
-                        f"ground truth role guess has established for {req}"
-                    )
-            elif role in good_roles:
-                self.process_req(
-                    req=Request(
-                        prompt=None,
-                        resp=None,
-                        game_idx=req.game_idx,
-                        player_idx=req.buffer["tgt_player_i"],
-                        history=req.history,
-                        env=req.env,
-                        status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                        args={"tgt_player_i": req.player_idx},
-                        prev=None if DEBUG == 0 else deepcopy(req),
-                        buffer={"guess_belief": req.args},
-                    ),
-                    req_queue=req_queue,
-                )
-                # let it come back to this role belief
-                return
-                # wait for the role guess to create summarize
-                to_forward = False
-            else:  # evil team
-                if tgt_role in bad_roles:
+            if status == RequestStatus.ROLE_BELIEF_SUCCEED:
+                if req.player_idx in req.history["role_belief"][
+                    n_round - 1
+                ] and any(
+                    resp["tgt_player"] == req.buffer["tgt_player_i"]
+                    for resp in req.history["role_belief"][n_round - 1][
+                        req.player_idx
+                    ]
+                ):
                     if self.logger:
                         self.logger.debug(
-                            f"Since {tgt_role} knows the role of all Evil players, we did not add extra role guessing prompt."
+                            f"status = {req.status} but role_belief is done for round={n_round}. This shouldn't happen."
                         )
-                else:
-                    self.process_req(
-                        req=Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=req.game_idx,
-                            player_idx=req.buffer["tgt_player_i"],
-                            history=req.history,
-                            env=req.env,
-                            status=RequestStatus.ROLE_GUESS_GET_PROMPT,
-                            args={"tgt_player_i": req.player_idx},
-                            prev=None if DEBUG == 0 else deepcopy(req),
-                            buffer={"guess_belief": req.args},
-                        ),
-                        req_queue=req_queue,
-                    )
-                    return
-                    # wait for the role guess to create summarize
-                    to_forward = False
-
-            if status == RequestStatus.ROLE_BELIEF_SUCCEED:
+                        for i, _req in _get_all_prev(req):
+                            self.logger.debug(f"{i}: {req}")
+                    raise ValueError("Duplicate role belief request.")
                 resp = req.resp
-                req.history["role_belief"][n_round - 1][req.player_idx] = {
-                    "prompt": prompt,
-                    "output": resp,
-                    "init_resp": req.buffer["init_resp"],
-                    "src_player": req.player_idx,
-                    "tgt_player": req.buffer["tgt_player_i"],
-                    "tgt_role": req.buffer["tgt_role"],
-                }
-
-                to_forward = True
-
-                if to_forward:
-                    self.process_req(
-                        req=Request(
-                            prompt=None,
-                            resp=None,
-                            game_idx=req.game_idx,
-                            player_idx=req.player_idx,
-                            history=req.history,
-                            env=req.env,
-                            status=RequestStatus.SUMMARIZE_GET_PROMPT,
-                            prev=None if DEBUG == 0 else deepcopy(req),
+                req.history["role_belief"][n_round - 1].setdefault(
+                    req.player_idx, []
+                ).append(
+                    {
+                        "prompt": prompt,
+                        "output": resp,
+                        "init_resp": req.buffer["init_resp"],
+                        "src_player": req.player_idx,
+                        "tgt_player": req.buffer["tgt_player_i"],
+                        "tgt_role": (
+                            req.buffer["tgt_role"]
+                            if not self.use_team_prompt
+                            else None
                         ),
-                        req_queue=req_queue,
-                    )
-                elif self.logger:
+                    }
+                )
+                self.guess_and_belief_counter[req.game_idx] -= 1
+                if self.logger:
                     self.logger.debug(
-                        f"Role belief generate another role quess request. Therefore, we will wait it to generate summarize request for me. {req}"
+                        f"Game number: {req.game_idx}.  Round: {n_round}. Role belief succeed. Current player is Player {req.player_idx}. Counter is {self.guess_and_belief_counter[req.game_idx]}"
                     )
+                if self.guess_and_belief_counter[req.game_idx] == 0:
+                    if self.logger:
+                        self.logger.debug(
+                            f"Game number: {req.game_idx} has finished all role guess and belief inference. Routing to summarization."
+                        )
+                    for i in range(n_player):
+                        self.process_req(
+                            req=Request(
+                                prompt=None,
+                                resp=None,
+                                game_idx=req.game_idx,
+                                player_idx=i,
+                                history=req.history,
+                                env=req.env,
+                                status=RequestStatus.SUMMARIZE_GET_PROMPT,
+                                prev=None if DEBUG == 0 else deepcopy(req),
+                            ),
+                            req_queue=req_queue,
+                        )
                 return
-            else:
+            else:  # get_prompt or error
                 req_queue.append(
                     Request(
                         prompt=prompt,
@@ -834,10 +783,13 @@ class RequestProcessor:
                 else:
                     if self.logger:
                         self.logger.debug(
-                            f"`use_summary` is not specified. {self.n_summaries} players reached only so we will wait. {req}"
+                            f"`use_summary` is not specified. {self.n_summaries[req.game_idx]} players reached only so we will wait. {req}"
                         )
                 return
-            if self.logger and RequestStatus.SUMMARIZE_GET_PROMPT:
+            if (
+                self.logger
+                and req.status == RequestStatus.SUMMARIZE_GET_PROMPT
+            ):
                 self.logger.debug(
                     f"Game number: {req.game_idx}.  Round: {n_round}. Summarize phase. Current player is Player {req.player_idx}."
                 )
@@ -1199,10 +1151,12 @@ class RequestProcessor:
 def main(
     output_path,
     model_name=None,
-    model_names: Tuple[
+    model_names: List[
         Dict[str, Union[int, str]],
+    ] = None,  # (model_name, model_path, port number)
+    lora_names: List[
         Dict[str, Union[int, str]],
-    ] = None,  # (model_path, port number)
+    ] = None,  # (model_name, model_path, lora_path)
     n_games=20,
     game_batch_size: int = None,
     inference_strategy: str = "vllm",
@@ -1258,7 +1212,15 @@ def main(
                 assert (
                     k in _model
                 ), f"The key `{k}` should be provided. Received: {_model}"
-
+    if lora_names is not None:
+        for _model in lora_names:
+            for k in ["lora_path", "path", "name"]:
+                assert (
+                    k in _model
+                ), f"The key `{k}` should be provided. Received: {_model}"
+    assert (
+        use_team_prompt
+    ), "`use_team_prompt` can only be true since I didn't support it in `_add_role_guess_and_belief`."
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_name = os.path.split(output_path)[-1].rsplit(".", 1)[0] + ".txt"
     logger = get_logger(
@@ -1268,8 +1230,12 @@ def main(
         file_level="debug",
         log_path=os.path.join("logs", log_name),
     )
-    if (model_name is not None) == (model_names is not None):
-        raise ValueError("Either provide `model_name` or `model_names`.")
+    if (model_name is not None) + (model_names is not None) + (
+        lora_names is not None
+    ) != 1:
+        raise ValueError(
+            "Either provide `model_name` or `model_names` or `lora_names`."
+        )
 
     if to_guess_role != to_guess_belief:
         raise ValueError(
@@ -1326,7 +1292,7 @@ def main(
                 raise ValueError(
                     "Using multiple models with local models are only allowed with `DEBUG`."
                 )
-            models = []
+            models = {}
             for i, model_config in enumerate(model_names):
                 model_path = model_config["path"]
                 model = AutoModelForCausalLM.from_pretrained(
@@ -1347,7 +1313,7 @@ def main(
                     model_name=model_path,  # doesn't matter
                     end_tokens=[tokenizer.eos_token],
                 )
-                models.append(model)
+                models[model_config["name"]] = model
         sampling_params = SamplingParamsWrapper(
             temperature=temperature, top_p=top_p, max_tokens=max_tokens
         )
@@ -1394,6 +1360,27 @@ def main(
             max_tokens=max_tokens,
             seed=seed if not seed_global else None,
         )
+    elif inference_strategy == "vllm" and lora_names is not None:
+        from vllm import LLM, SamplingParams
+        from vllm.lora.request import LoRARequest
+
+        paths = list(set([n["path"] for n in lora_names]))
+        assert (
+            len(paths) == 1
+        ), f"Only one base model is currently allowed for lora. Received: {paths}"
+        model = LLM(
+            model=paths[0],
+            dtype="float16",
+            tensor_parallel_size=n_gpus,
+            seed=seed if seed_global else 0,
+            enable_lora=True,
+        )
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            seed=seed if not seed_global else None,
+        )
     else:
         assert (
             inference_strategy == "vllm"
@@ -1410,8 +1397,8 @@ def main(
         )
         agents.append((model_name, agent))
     else:
-        for i, model_config in enumerate(model_names):
-            model_path = model_config["path"]
+        _model_names = model_names if model_names is not None else lora_names
+        for i, model_config in enumerate(_model_names):
             agent = VllmAgent(
                 add_strategy_in_prompt=add_strategy_in_prompt,
                 add_quest_strategy_in_prompt=add_quest_strategy_in_prompt,
@@ -1474,8 +1461,12 @@ def main(
                 "n_error": 0,
                 "id": game_i,
             }
-            if model_names is not None:
-                current_model_names = model_names
+            if model_names is not None or lora_names is not None:
+                if model_names is not None:
+                    current_model_names = [m["name"] for m in model_names]
+                elif lora_names is not None:
+                    current_model_names = [m["name"] for m in lora_names]
+
                 if len(current_model_names) > 2:
                     # allow duplicate here
                     current_model_names = seeder.choices(
@@ -1485,20 +1476,10 @@ def main(
                     #     current_model_names, k=2
                     # )
 
-                # game 1
-                history["n_error"] = {
-                    model_config["name"]: 0
-                    for model_config in current_model_names
-                }
-                new_history = deepcopy(history)
-                new_history["models"] = [
-                    (
-                        current_model_names[0]["name"]
-                        if role[-1]
-                        else current_model_names[1]["name"]
-                    )
-                    for role in history["roles"]
-                ]
+                new_history = construct_two_players_game(
+                    history,
+                    current_model_names,
+                )
                 reqs.append(
                     Request(
                         prompt=None,
@@ -1516,14 +1497,9 @@ def main(
                 if to_exchange_role_per_setting:
                     env = deepcopy(env)
                     new_history = deepcopy(history)
-                    new_history["models"] = [
-                        (
-                            current_model_names[1]["name"]
-                            if role[-1]
-                            else current_model_names[0]["name"]
-                        )
-                        for role in history["roles"]
-                    ]
+                    new_history = construct_two_players_game(
+                        history, current_model_names, revert=True
+                    )
                     reqs.append(
                         Request(
                             prompt=None,
@@ -1577,7 +1553,7 @@ def main(
             reqs = new_reqs
             if model_name is not None or (
                 model_names is not None
-                and DEBUG == 1
+                and DEBUG in [1, 2]
                 and inference_strategy == "vllm"
             ):
                 resps = model.generate(
@@ -1589,17 +1565,43 @@ def main(
                 if DEBUG == 1:
                     resps = []
                     for req in reqs:
-                        for model_i in range(len(model_names)):
+                        model_name = req.history["models"][req.player_idx]
+                        resp = models[model_name].generate(
+                            [req.prompt],
+                            sampling_params=sampling_params,
+                            # use_tqdm=False,
+                        )
+                        resps += resp
+                elif lora_names is not None:
+                    idx2resp = {}
+                    for j, model_config in enumerate(lora_names):
+                        idxes = []
+                        curr_reqs = []
+                        for i, req in enumerate(reqs):
                             if (
                                 req.history["models"][req.player_idx]
-                                == model_names[model_i]["name"]
+                                == model_config["name"]
                             ):
-                                resp = models[model_i].generate(
-                                    [req.prompt],
-                                    sampling_params=sampling_params,
-                                    # use_tqdm=False,
+                                curr_reqs.append(req)
+                                idxes.append(i)
+                        resps = model.generate(
+                            [req.prompt for req in curr_reqs],
+                            sampling_params=sampling_params,
+                            lora_request=(
+                                LoRARequest(
+                                    model_config["name"],
+                                    j,
+                                    model_config["lora_path"],
                                 )
-                                resps += resp
+                                if model_config["lora_path"]
+                                else None
+                            ),
+                            # use_tqdm=False,
+                        )
+                        for idx, resp in zip(idxes, resps):
+                            idx2resp[idx] = resp
+                    assert len(idx2resp) == len(reqs)
+                    resps = [idx2resp[i] for i in range(len(resps))]
                 else:
                     args = []
                     for req in reqs:
@@ -1640,7 +1642,9 @@ def main(
 
             for req, resp in zip(reqs, resps):
                 req.resp = resp.outputs[0].text
-                if model_name is not None and inference_strategy == "vllm":
+                if (
+                    model_name is not None or lora_names is not None
+                ) and inference_strategy == "vllm":
                     req.history["input_tokens"] += len(resp.prompt_token_ids)
                     req.history["output_tokens"] += len(
                         resp.outputs[0].token_ids

@@ -186,45 +186,47 @@ def get_role_guess(history, round_i: int, player_i: int, use_team_vote: bool):
         if str(player_i) not in history["role_guess"][round_i]:
             return None
         src_player_i = str(player_i)
-    row = history["role_guess"][round_i][src_player_i]
-    if isinstance(row, list):
-        row = seeder.choice(row)
-    prompt: str = row["prompt"]
+    rows = history["role_guess"][round_i][src_player_i]
+    if not isinstance(rows, list):
+        rows = [rows]
 
-    if "score" not in row["output"]:
-        tgt_role: str = seeder.choice(list(row["output"].keys()))
-        resp: str = json.dumps(
-            row["output"][tgt_role],
-            indent=4,
-            ensure_ascii=False,
-        )
-        new_prompt = GUESS_ONE_ROLE_PROMPT.replace(
-            "{i}", str(row["tgt_player"])
-        ).replace("{role}", tgt_role)
-        prompt = prompt.split("Based on the game so far")[0] + new_prompt
-    else:
-        prompt = row["prompt"]
-        resp: str = json.dumps(
-            row["output"],
-            indent=4,
-            ensure_ascii=False,
-        )
+    outputs = []
+    for row in rows:
+        prompt: str = row["prompt"]
+        if "score" not in row["output"]:
+            tgt_role: str = seeder.choice(list(row["output"].keys()))
+            resp: str = json.dumps(
+                row["output"][tgt_role],
+                indent=4,
+                ensure_ascii=False,
+            )
+            new_prompt = GUESS_ONE_ROLE_PROMPT.replace(
+                "{i}", str(row["tgt_player"])
+            ).replace("{role}", tgt_role)
+            prompt = prompt.split("Based on the game so far")[0] + new_prompt
+        else:
+            prompt = row["prompt"]
+            resp: str = json.dumps(
+                row["output"],
+                indent=4,
+                ensure_ascii=False,
+            )
 
-    if (
-        not history["roles"][row["tgt_player"]][2]
-        and row["output"]["score"] > 5
-    ):
-        output = {
-            "instruction": prompt,
-            "output": resp,
-            "game_id": history["id"],
-            "round": round_i,
-            "player_id": player_i,
-            "player_role": role,
-            "phase": "role_guess",
-        }
-        return output
-    return None
+        if (
+            not history["roles"][row["tgt_player"]][2]
+            and row["output"]["score"] > 5
+        ):
+            output = {
+                "instruction": prompt,
+                "output": resp,
+                "game_id": history["id"],
+                "round": round_i,
+                "player_id": player_i,
+                "player_role": role,
+                "phase": "role_guess",
+            }
+            outputs.append(output)
+    return outputs
 
 
 def get_role_belief(
@@ -367,14 +369,14 @@ def main(
 
                     # role guess
                     if include_role_guess:
-                        output = get_role_guess(
+                        outputs = get_role_guess(
                             history=row,
                             round_i=round_i,
                             player_i=player_i,
                             use_team_vote=use_team_vote,
                         )
-                        if output is not None:
-                            out_data.append(output)
+                        if outputs:
+                            out_data += outputs
 
                     # belief guess
                     if include_role_belief:

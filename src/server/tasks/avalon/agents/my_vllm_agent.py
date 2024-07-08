@@ -1588,7 +1588,8 @@ class VllmAgent:
                         "Merlin can't guess role since he already know."
                     )
             messages = [{"role": "user", "content": prompt}]
-            req.buffer["tgt_role"] = tgt_role
+            if not use_team_prompt:
+                req.buffer["tgt_role"] = tgt_role
             req.buffer["tgt_player_i"] = player_i
             req.buffer["included_roles"] = included_roles
             req.buffer["prompt"] = prompt
@@ -1784,11 +1785,12 @@ class VllmAgent:
             tgt_player_i = self.seeder.choice(
                 [i for i in range(n_players) if i != req.player_idx]
             )
-        if "tgt_role" in req.args:
-            tgt_role = req.args["tgt_role"]
-        else:
-            all_roles = list(set([role[1] for role in roles]))
-            tgt_role = self.seeder.choice(all_roles)
+        if not use_team_prompt:
+            if "tgt_role" in req.args:
+                tgt_role = req.args["tgt_role"]
+            else:
+                all_roles = list(set([role[1] for role in roles]))
+                tgt_role = self.seeder.choice(all_roles)
         if req.status == RequestStatus.ROLE_BELIEF_GET_PROMPT:
             prompt = self._get_prompt_prefix(
                 player_id=req.player_idx,
@@ -1807,7 +1809,8 @@ class VllmAgent:
             req.buffer["trial"] = 0
             req.buffer["prompt"] = prompt
             req.buffer["tgt_player_i"] = tgt_player_i
-            req.buffer["tgt_role"] = tgt_role
+            if not use_team_prompt:
+                req.buffer["tgt_role"] = tgt_role
             req.buffer["msg"] = messages
             prompt = self._get_prompt_from_msg(req.buffer["msg"])
             return prompt, RequestStatus.ROLE_BELIEF_CHECK_ERROR
