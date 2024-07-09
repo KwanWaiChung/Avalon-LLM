@@ -1657,7 +1657,9 @@ def main(
             count += 1
 
             if count % 5 == 0:
-                with open(output_path, "w", encoding="utf-8") as f:
+                with open(
+                    output_path, "w", encoding="utf-8", errors="replace"
+                ) as f:
                     f.write(
                         "\n".join(
                             [
@@ -1673,7 +1675,7 @@ def main(
             # debug
 
     # save all
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8", errors="replace") as f:
         f.write(
             "\n".join(
                 [json.dumps(row, ensure_ascii=False) for row in histories]
