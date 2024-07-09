@@ -303,17 +303,18 @@ class RequestProcessor:
                 assert (
                     len(guess) == n_player
                 ), f"Should have {n_player} belief guess at each round but received {len(guess)} guesses in game {req.game_idx}."
-                for p_guess in guess.values():
-                    for k in [
-                        "output",
-                        "prompt",
-                        "src_player",
-                        "tgt_player",
-                        "tgt_role",
-                    ]:
-                        assert (
-                            k in p_guess
-                        ), f"Should have key `{k}` in belief guess but received {p_guess} in game {req.game_idx}."
+                for p_guesses in guess.values():
+                    for p_guess in p_guesses:
+                        for k in [
+                            "output",
+                            "prompt",
+                            "src_player",
+                            "tgt_player",
+                            "tgt_role",
+                        ]:
+                            assert (
+                                k in p_guess
+                            ), f"Should have key `{k}` in belief guess but received {p_guess} in game {req.game_idx}."
         self.n_finished_games += 1
         self.logger.info(f"Game {req.game_idx} has finished.")
 
